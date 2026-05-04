@@ -21,31 +21,38 @@ public class Scheduler
                 int chunkSize = nodeCount / threadCount;
                 var nodeArray = nodes.ToArray();
 
-                for (int c = 0; c < cycles; c++)
+                // Instead of for(c < cycles), we run one long-lived parallel block
+                Parallel.For(0, threadCount, t =>
                 {
-                    Parallel.For(0, threadCount, t =>
-                    {
-                        int start = t * chunkSize;
-                        int end = (t == threadCount - 1) ? nodeCount : start + chunkSize;
+                    int start = t * chunkSize;
+                    int end = (t == threadCount - 1) ? nodeCount : start + chunkSize;
+                    bool allDone = false;
 
+                    while (!allDone)
+                    {
+                        allDone = true;
                         for (int i = start; i < end; i++)
                         {
-                            int myWork = helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
-                            if (myWork == -1)
-                                continue;
+                            // 1. Check if this specific node still has work to do
+                            int myWork = nodeArray[i].WorkDone;
+                            if (myWork >= cycles) continue;
 
-                            try
+                            allDone = false; // We found work, so we aren't done yet
+
+                            // 2. CanFire now acts as the gatekeeper. 
+                            // It naturally handles the "cycle" logic because it won't 
+                            // fire if parents haven't finished their current version.
+                            int workSnap = helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
+
+                            if (workSnap != -1)
                             {
                                 nodeArray[i].Task?.Invoke();
-                                nodeArray[i].TryIncrementWorkDone(myWork);
+                                nodeArray[i].TryIncrementWorkDone(workSnap);
                             }
-                            catch {
-                                throw new Exception($"node {i} Task or Counter Threw");
-                            }
-
                         }
-                    });
-                }
+                        // Optional: Thread.Yield() or a tiny spin here if you want to be nice to the CPU
+                    }
+                });
                 break;
 
             default:
