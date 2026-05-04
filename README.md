@@ -82,12 +82,7 @@ Parent must complete cycle N+1 before child may begin cycle N+1.
 The `CanFire` check verifies this before every invocation. As long as a parent's `WorkDone` counter is ahead of a child's by at least 1, the child's read of the shared `Slot<T>` is guaranteed to see the parent's latest written value.
 
 ```
-Cycle timeline (slack = 0):
 
-  Node 0  ──●──────●──────●──────●──▶  (producer)
-              ↓      ↓      ↓      ↓
-  Node 1  ────●──────●──────●──────●─▶  (consumer)
-```
 
 With `slack > 0`, the producer is allowed to run ahead by up to `slack` cycles, enabling pipeline parallelism at the cost of the consumer reading an older slot value (a deliberate trade-off).
 
