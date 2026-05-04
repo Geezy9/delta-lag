@@ -1,5 +1,8 @@
 namespace revolver;
 
+/// <summary>
+/// Provides methods to execute scheduling algorithms on a directed graph for a specified number of cycles.
+/// </summary>
 public class Scheduler
 {
     public void Run(Graph graph, int cycles, int slack, string algo)
@@ -12,16 +15,17 @@ public class Scheduler
                 var edges = g.edges.ToArray();
                 var offsets = g.offsets.ToArray();
 
+                // We need the reverse CSR to efficiently check parent completion in CanFire
                 helpers.BuildReverseCSR(g, out var parentEdges, out var parentOffsets);
                 var parentEdgesArray = parentEdges.ToArray();
                 var parentOffsetsArray = parentOffsets.ToArray();
                 int nodeCount = nodes.Count;
-
                 int threadCount = Environment.ProcessorCount;
                 int chunkSize = nodeCount / threadCount;
                 var nodeArray = nodes.ToArray();
 
-                // Instead of for(c < cycles), we run one long-lived parallel block
+
+                // nodes get chunked and passed out. threads loop until their chunks min work is == cycles.
                 Parallel.For(0, threadCount, t =>
                 {
                     int start = t * chunkSize;
@@ -37,7 +41,7 @@ public class Scheduler
                             int myWork = nodeArray[i].WorkDone;
                             if (myWork >= cycles) continue;
 
-                            allDone = false; // We found work, so we aren't done yet
+                            allDone = false;
 
                             // 2. CanFire now acts as the gatekeeper. 
                             // It naturally handles the "cycle" logic because it won't 
@@ -50,7 +54,7 @@ public class Scheduler
                                 nodeArray[i].TryIncrementWorkDone(workSnap);
                             }
                         }
-                        // Optional: Thread.Yield() or a tiny spin here if you want to be nice to the CPU
+
                     }
                 });
                 break;

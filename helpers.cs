@@ -56,7 +56,7 @@ internal class helpers
         parentOffsets = new List<int>(new int[n + 1]);
         parentEdges = new List<int>(g.edges.Count);
 
-        // Count in-degrees
+        // Count In-degrees
         for (int u = 0; u < n; u++)
         {
             for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
@@ -119,14 +119,17 @@ internal class helpers
 
         if (pLen <= cLen)
         {
+            // Check parents first, since they are more likely to block firing
             for (int k = parentStart; k < parentEnd; k++)
             {
+                // all parents must be ahead by at least 1 unit of work
                 if (nodes[parentEdges[k]].WorkDone < minParentWork)
                     return -1;
             }
 
             for (int k = childStart; k < childEnd; k++)
             {
+                // all children must be behind by at most slack units of work
                 if (nodes[edges[k]].WorkDone < minChildWork)
                     return -1;
             }
@@ -135,6 +138,7 @@ internal class helpers
         {
             for (int k = childStart; k < childEnd; k++)
             {
+                
                 if (nodes[edges[k]].WorkDone < minChildWork)
                     return -1;
             }
