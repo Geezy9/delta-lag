@@ -1,4 +1,4 @@
-namespace revolver;
+namespace deltalag;
 
 /// <summary>
 /// Provides methods to execute scheduling algorithms on a directed graph for a specified number of cycles.

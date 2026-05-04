@@ -1,5 +1,5 @@
 ﻿using System.Runtime.CompilerServices;
-namespace revolver;
+namespace deltalag;
 
 internal class helpers
 {

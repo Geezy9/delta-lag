@@ -1,4 +1,4 @@
-namespace revolver;
+namespace deltalag;
 
 
 // Almost DoD representation of a graph, with separate lists for nodes, edges, and offsets (CSR format).
