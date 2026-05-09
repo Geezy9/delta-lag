@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="../superEtl/superEtl.csproj" Id="8bb6ad2d-7f9a-4f46-84d9-1f5c3b7db6db" />
-  <Project Path="../testers/testers.csproj" />
-  <Project Path="delta-lag.csproj" />
-</Solution>
