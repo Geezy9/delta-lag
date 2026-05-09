@@ -30,6 +30,8 @@ scheduler.Run(builder.Build(), cycles: 100, slack: 0, algo: "Wave");
 Console.WriteLine(slotY.Value); // 43
 ```
 
+
+
 Nodes share data through `Slot<T>` — no message passing, no boxing. The scheduler enforces ordering structurally via `WorkDone` counters and a CAS (`Interlocked.CompareExchange`).
 
 ---
@@ -65,6 +67,9 @@ child.WorkDone  >= node.WorkDone - slack // node can't lap children
 **`Slot<T>`** — `T Value` — shared data cell captured by closures.
 
 ---
+## Important: 
+When utilizing the slack parameter, please be aware that this library does not provide buffering for `Slot<T>`. Therefore, external buffering mechanisms must be implemented.
+
 
 ## License
 
