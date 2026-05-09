@@ -10,6 +10,7 @@ public class Scheduler
         switch (algo)
         {
             case "Wave":
+                
                 var g = graph;
                 var nodes = g.nodes;
                 var edges = g.edges.ToArray();
@@ -43,16 +44,13 @@ public class Scheduler
 
                             allDone = false;
 
-                            // 2. CanFire now acts as the gatekeeper. 
-                            // It naturally handles the "cycle" logic because it won't 
-                            // fire if parents haven't finished their current version.
                             int workSnap = helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
-
-                            if (workSnap != -1)
+                            if (workSnap != -1 && workSnap < cycles && nodeArray[i].TryClaimWork(workSnap))
                             {
-                                nodeArray[i].Task?.Invoke();
-                                nodeArray[i].TryIncrementWorkDone(workSnap);
+                                nodeArray[i].Task?.Invoke(workSnap);
+                                nodeArray[i].PublishWorkDone(workSnap + 1);
                             }
+
                         }
 
                     }

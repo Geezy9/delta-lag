@@ -3,9 +3,9 @@ namespace deltalag;
 public class GraphBuilder
 {
     private readonly List<List<int>> adjacency = new();
-    private readonly List<Action?> tasks = new();
+    private readonly List<Action<int>?> tasks = new();
 
-    public int AddNode(Action? task = null)
+    public int AddNode(Action<int>? task = null)
     {
         adjacency.Add(new List<int>());
         tasks.Add(task);
