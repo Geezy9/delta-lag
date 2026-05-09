@@ -8,8 +8,16 @@
 git clone https://github.com/Geezy9/delta-lag.git
 cd delta-lag && dotnet build && dotnet run
 ```
+## Why
 
----
+TLDR: Fast, Deterministic, lightweight.
+
+Most task schedulers do a great job maximizing throughput, but they pay for it with layers of locks, queues, and work-stealing algorithms. That’s great for general workloads, but overkill when you want predictable, low-overhead parallelism.
+
+Lock-free algorithms like ring buffers show how far you can get with nothing but atomic counters. delta-lag extends that idea to an entire DAG: every node progresses like a position in a ring buffer, coordinated only by distance constraints.
+
+No locks. No stealing. No global queues.
+
 
 ## Quick Example
 
