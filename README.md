@@ -26,8 +26,8 @@ Representative run processing 300,000 tasks:
 
 | Engine | Tasks Processed | Time Taken | Memory Wasted (GC) | Efficiency |
 |---|---:|---:|---:|---|
-| TPL Dataflow | 300,000 | 15.6 ms | 2,371 KB | 🐌 Baseline |
-| Delta-lag | 300,000 | 4.2 ms | 0 KB | ⚡ 3.7x Faster |
+| TPL Dataflow | 300,000 | 15.6 ms | 2,371 KB | Baseline |
+| Delta-lag | 300,000 | 4.2 ms | 0 KB | 3.7x Faster |
 
 ## Warning:
 
