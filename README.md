@@ -73,6 +73,7 @@ builder.AddEdge(producer, consumer);
 // - slack: 0 means strict ordering (no lookahead)
 // - threads: 2 parallel execution threads
 var ctx = builder.Build();
+// if you need to mutate the state of the graph you can do so by modifying the returned WorkContext before passing it to a run.
 var scheduler = new Scheduler();
 scheduler.Run(ctx, cycles: 32, slack: 0, threads: 2);
 
@@ -89,11 +90,8 @@ Nodes share data through `Slot<T>` — no message passing, no boxing. The schedu
 > Open Changelog.md for full breakdown
 
 The latest updates include:
-- `algo` Depreciated and removed from `Scheduler.Run()`.
-- new `threads` parameter added to `Scheduler.Run()`.
-- `Scheduler` now automaticaly clamps thread values based on sane defaults.
 - `GraphBuilder.Build()` now returns a `WorkContext` with all scheduling structures pre-allocated. `Scheduler.Run()` accepts a `WorkContext` directly, eliminating setup allocations at scheduling time.
-
+-  The `Node` class now is cache aligned to reduce false sharing and improve performance under contention.
 ---
 
 ## How Scheduling Works

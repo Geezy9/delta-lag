@@ -29,12 +29,10 @@ public class Scheduler
         int threadCount;
         if (trustUser)
         {
-            // Clamp to CPU count to avoid oversubscription
             threadCount = Math.Min(threads, Environment.ProcessorCount);
         }
         else
         {
-            // Auto mode: scale based on graph size
             threadCount = Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
         }
         int chunkSize = nodeCount / threadCount;
@@ -51,12 +49,12 @@ public class Scheduler
                 allDone = true;
                 for (int i = start; i < end; i++)
                 {
-                    // 1. Check if this specific node still has work to do
+
                     int myWork = nodeArray[i].WorkDone;
                     if (myWork >= cycles) continue;
 
                     allDone = false;
-
+                    // workSnap is the cycle we can work on. if it's -1, we can't work. if it's < cycles, we can work. if it's >= cycles, we can't work.
                     int workSnap = helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
                     if (workSnap != -1 && workSnap < cycles && nodeArray[i].TryClaimWork(workSnap))
                     {
