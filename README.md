@@ -20,6 +20,15 @@ Lock-free algorithms like ring buffers show how far you can get with nothing but
 
 No locks. No stealing. No global queues.
 
+## Benchmark Snapshot
+
+Representative run processing 300,000 tasks:
+
+| Engine | Tasks Processed | Time Taken | Memory Wasted (GC) | Efficiency |
+|---|---:|---:|---:|---|
+| TPL Dataflow | 300,000 | 15.6 ms | 2,371 KB | 🐌 Baseline |
+| Delta-lag | 300,000 | 4.2 ms | 0 KB | ⚡ 3.7x Faster |
+
 ## Warning:
 
 When utilizing the slack parameter, please be aware that this library does not provide buffering for `Slot<T>`. Therefore, external buffering mechanisms must be implemented.
