@@ -2,6 +2,8 @@
 
 > Lock-free, parallel DAG scheduler for C# — distance constraints keep nodes in sync without locks.
 
+Status: Experimental. Not production‑ready. APIs may change.
+
 **Prerequisites:** .NET 9+
 
 ```bash
@@ -18,40 +20,67 @@ Lock-free algorithms like ring buffers show how far you can get with nothing but
 
 No locks. No stealing. No global queues.
 
+## Warning:
 
-## Quick Example
+When utilizing the slack parameter, please be aware that this library does not provide buffering for `Slot<T>`. Therefore, external buffering mechanisms must be implemented.
+
+## Quick Example with a ring buffer.
 
 ```csharp
 using deltalag;
 
-var slotX = new Slot<int>();
-var slotY = new Slot<int>();
+const int BufferSize = 8;
+int[] buffer = new int[BufferSize];
 
 var builder = new GraphBuilder();
-int producer = builder.AddNode(_ => slotX.Value = 42);
-int consumer = builder.AddNode(_ => slotY.Value = slotX.Value + 1);
+
+// Producer node: Writes data into ring buffer
+// Each work-unit gets assigned to a buffer slot using modulo
+int producer = builder.AddNode(workUnit =>
+{
+    int index = workUnit % BufferSize;
+    buffer[index] = workUnit;
+});
+
+// Consumer node: Reads data from ring buffer
+// Uses the same modulo logic to read from the correct slot
+int consumer = builder.AddNode(workUnit =>
+{
+    int index = workUnit % BufferSize;
+    int value = buffer[index];
+    
+    // NOTE: Console.WriteLine is blocking and slow - used here only for demonstration.
+    // In production code, use non-blocking operations to avoid performance degradation.
+    Console.WriteLine($"Consumed {value} from slot {index}");
+});
+
+// Define dependency: Consumer must execute after Producer for each work-unit
+// This prevents the consumer from reading before the producer writes
 builder.AddEdge(producer, consumer);
 
+// Create scheduler and execute the task graph
+// - cycles: 32 work-units will be processed
+// - slack: 0 means strict ordering (no lookahead)
+// - threads: 2 parallel execution threads
 var scheduler = new Scheduler();
-scheduler.Run(builder.Build(), cycles: 100, slack: 0, algo: "Wave");
+scheduler.Run(builder.Build(), cycles: 32, slack: 0, threads: 2);
 
-Console.WriteLine(slotY.Value); // 43
 ```
 
 Nodes share data through `Slot<T>` — no message passing, no boxing. The scheduler enforces ordering structurally via claimed work and published completion using atomic CAS operations.
 
----
 
-## What Changed Recently
 
-The latest scheduler update changes node tasks from `Action` to `Action<int>`, so each node receives the current work unit when it fires.
 
-It also splits progress tracking into two phases:
 
-- `WorkClaimed` — atomically reserves a work unit so only one thread can execute it
-- `WorkDone` — publishes that the work unit fully completed and its outputs are visible
+## What Changed Recently 
 
-This claim/publish pattern prevents double-firing and reduces race conditions during parallel execution.
+> Open Changelog.md for full breakdown
+
+The latest updates include:
+- `algo` Depreciated and removed from `Scheduler.Run()`.
+- new `threads` parameter added to `Scheduler.Run()`.
+- `Scheduler` now automaticaly clamps thread values based on sane defaults. 
 
 ---
 
@@ -88,7 +117,7 @@ If the node is eligible, the scheduler:
 **`Scheduler`**
 | Method | Description |
 |---|---|
-| `void Run(Graph, int cycles, int slack, string algo)` | Run the graph. |
+| `void Run(Graph, int cycles, int slack, int threads)` | Run the graph. |
 
 **`Node`**
 | Member | Description |
@@ -100,9 +129,7 @@ If the node is eligible, the scheduler:
 
 **`Slot<T>`** — `T Value` — shared data cell captured by closures.
 
----
-## Important:
-When utilizing the slack parameter, please be aware that this library does not provide buffering for `Slot<T>`. Therefore, external buffering mechanisms must be implemented.
+
 
 ## License
 
