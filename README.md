@@ -4,7 +4,7 @@
 
 Status: Experimental. Not production‑ready. APIs may change.
 
-**Prerequisites:** .NET 9+
+**Prerequisites:** .NET 10+
 
 ```bash
 git clone https://github.com/Geezy9/delta-lag.git
@@ -58,12 +58,14 @@ int consumer = builder.AddNode(workUnit =>
 // This prevents the consumer from reading before the producer writes
 builder.AddEdge(producer, consumer);
 
-// Create scheduler and execute the task graph
+// Build compiles the graph and pre-allocates all scheduling structures upfront.
+// Run consumes the WorkContext with zero setup allocations at scheduling time.
 // - cycles: 32 work-units will be processed
 // - slack: 0 means strict ordering (no lookahead)
 // - threads: 2 parallel execution threads
+var ctx = builder.Build();
 var scheduler = new Scheduler();
-scheduler.Run(builder.Build(), cycles: 32, slack: 0, threads: 2);
+scheduler.Run(ctx, cycles: 32, slack: 0, threads: 2);
 
 ```
 
@@ -80,7 +82,8 @@ Nodes share data through `Slot<T>` — no message passing, no boxing. The schedu
 The latest updates include:
 - `algo` Depreciated and removed from `Scheduler.Run()`.
 - new `threads` parameter added to `Scheduler.Run()`.
-- `Scheduler` now automaticaly clamps thread values based on sane defaults. 
+- `Scheduler` now automaticaly clamps thread values based on sane defaults.
+- `GraphBuilder.Build()` now returns a `WorkContext` with all scheduling structures pre-allocated. `Scheduler.Run()` accepts a `WorkContext` directly, eliminating setup allocations at scheduling time.
 
 ---
 
@@ -112,12 +115,22 @@ If the node is eligible, the scheduler:
 |---|---|
 | `int AddNode(Action<int>? task)` | Add a node. The task receives the current work unit index. Returns the node index. |
 | `void AddEdge(int from, int to)` | Add a directed edge. |
-| `Graph Build()` | Compile to CSR-encoded graph. |
+| `WorkContext Build()` | Compile to CSR-encoded graph and pre-allocate all scheduling structures. |
 
 **`Scheduler`**
 | Method | Description |
 |---|---|
-| `void Run(Graph, int cycles, int slack, int threads)` | Run the graph. |
+| `void Run(WorkContext, int cycles, int slack, int threads)` | Run the pre-built work context. |
+
+**`Scheduler.WorkContext`**
+| Member | Description |
+|---|---|
+| `Graph Graph` | The underlying CSR-encoded graph. |
+| `Node[] NodeArray` | Pre-materialized node array. |
+| `int[] Edges` | Pre-materialized forward edge array. |
+| `int[] Offsets` | Pre-materialized CSR offset array. |
+| `int[] ParentEdges` | Pre-built reverse edge array for parent lookups. |
+| `int[] ParentOffsets` | Pre-built reverse CSR offsets for parent lookups. |
 
 **`Node`**
 | Member | Description |
