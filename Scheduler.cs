@@ -5,18 +5,24 @@ namespace deltalag;
 /// </summary>
 public class Scheduler
 {
-    public void Run(Graph graph, int cycles, int slack, int threads)
+    public struct WorkContext
     {
-        var g = graph;
-        var nodes = g.nodes;
-        var edges = g.edges.ToArray();
-        var offsets = g.offsets.ToArray();
+        public Graph Graph;
+        public Node[] NodeArray;
+        public int[] Edges;
+        public int[] Offsets;
+        public int[] ParentEdges;
+        public int[] ParentOffsets;
+    }
 
-        // We need the reverse CSR to efficiently check parent completion in CanFire
-        helpers.BuildReverseCSR(g, out var parentEdges, out var parentOffsets);
-        var parentEdgesArray = parentEdges.ToArray();
-        var parentOffsetsArray = parentOffsets.ToArray();
-        int nodeCount = g.nodes.Count();
+    public void Run(WorkContext ctx, int cycles, int slack, int threads)
+    {
+        var nodeArray = ctx.NodeArray;
+        var edges = ctx.Edges;
+        var offsets = ctx.Offsets;
+        var parentEdgesArray = ctx.ParentEdges;
+        var parentOffsetsArray = ctx.ParentOffsets;
+        int nodeCount = nodeArray.Length;
 
         // Trust user if they give a positive, reasonable value
         bool trustUser = threads > 0 && threads <= Environment.ProcessorCount * 2;
@@ -32,8 +38,6 @@ public class Scheduler
             threadCount = Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
         }
         int chunkSize = nodeCount / threadCount;
-        var nodeArray = nodes.ToArray();
-
 
         // nodes get chunked and passed out. threads loop until their chunks min work is == cycles.
         Parallel.For(0, threadCount, t =>
@@ -59,11 +63,8 @@ public class Scheduler
                         nodeArray[i].Task?.Invoke(workSnap);
                         nodeArray[i].PublishWorkDone(workSnap + 1);
                     }
-
                 }
-
             }
         });
-               
-        }
     }
+}

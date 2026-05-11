@@ -17,7 +17,7 @@ public class GraphBuilder
         adjacency[from].Add(to);
     }
 
-    public Graph Build()
+    public Scheduler.WorkContext Build()
     {
         var g = new Graph();
 
@@ -30,6 +30,16 @@ public class GraphBuilder
             g.offsets.Add(g.edges.Count);
         }
 
-        return g;
+        helpers.BuildReverseCSR(g, out var parentEdges, out var parentOffsets);
+
+        return new Scheduler.WorkContext
+        {
+            Graph = g,
+            NodeArray = g.nodes.ToArray(),
+            Edges = g.edges.ToArray(),
+            Offsets = g.offsets.ToArray(),
+            ParentEdges = parentEdges.ToArray(),
+            ParentOffsets = parentOffsets.ToArray(),
+        };
     }
 }
