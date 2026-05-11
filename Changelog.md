@@ -1,6 +1,9 @@
 # Changelog
 
 ## Latest Branch: Master
+### Refactor: Allign Node Class to Cache Line
+- Updated `Node` class to be cache aligned 3 Cache lines X (64 bytes) to reduce false sharing and improve performance under contention
+- 
 
 ### Refactor: Pre-allocate Scheduling Structures in `Build()`
 
