@@ -1,7 +1,20 @@
 # Changelog
 
+## Latest Branch: Add-Configurable-Partition-Strategy
+
+### Feature: Configurable Partition Strategy
+
+- Added `PartitionStrategy` enum with two values: `Stride` and `ChunkedLinear`
+- `Scheduler.Run()` now accepts a `PartitionStrategy` parameter to control how nodes are distributed across threads
+  - `Stride` — each thread processes every N-th node (interleaved); generally lower p95 latency on linear pipelines
+  - `ChunkedLinear` — each thread processes a contiguous block of nodes; favours spatial locality
+- Both strategies produce identical, deterministic output
+- Updated README with strategy documentation, a comparison table, and usage example
+
+---
+
 ## Latest Branch: Master
-### Refactor: Allign Node Class to Cache Line
+### Refactor: Align Node Class to Cache Line
 - Updated `Node` class to be cache aligned 3 Cache lines X (64 bytes) to reduce false sharing and improve performance under contention
 - 
 

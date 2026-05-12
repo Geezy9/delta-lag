@@ -69,17 +69,56 @@ builder.AddEdge(producer, consumer);
 
 // Build compiles the graph and pre-allocates all scheduling structures upfront.
 // Run consumes the WorkContext with zero setup allocations at scheduling time.
-// - cycles: 32 work-units will be processed
-// - slack: 0 means strict ordering (no lookahead)
-// - threads: 2 parallel execution threads
+// - cycles:   32 work-units will be processed
+// - slack:    0 means strict ordering (no lookahead)
+// - threads:  2 parallel execution threads
+// - strategy: controls how nodes are distributed across threads
 var ctx = builder.Build();
 // if you need to mutate the state of the graph you can do so by modifying the returned WorkContext before passing it to a run.
 var scheduler = new Scheduler();
-scheduler.Run(ctx, cycles: 32, slack: 0, threads: 2);
+scheduler.Run(ctx, cycles: 32, slack: 0, threads: 2, strategy: PartitionStrategy.Stride);
 
 ```
 
 Nodes share data through `Slot<T>` — no message passing, no boxing. The scheduler enforces ordering structurally via claimed work and published completion using atomic CAS operations.
+
+---
+
+## Partition Strategies
+
+`PartitionStrategy` controls how graph nodes are divided across threads. The right choice depends on the shape of your graph and how work is distributed.
+
+### `PartitionStrategy.Stride` *(recommended default)*
+
+Each thread is assigned every N-th node, where N is the thread count.
+
+- Thread 0 → nodes 0, 4, 8, 12, …
+- Thread 1 → nodes 1, 5, 9, 13, …
+- Thread 2 → nodes 2, 6, 10, 14, …
+
+**Best for:** pipelines and DAGs where nodes are roughly uniform in cost. Stride interleaving naturally spreads hot nodes across threads and tends to reduce contention on adjacent nodes.
+
+### `PartitionStrategy.ChunkedLinear`
+
+Each thread is assigned a contiguous block of nodes.
+
+- Thread 0 → nodes 0–15
+- Thread 1 → nodes 16–31
+- Thread 2 → nodes 32–47
+
+**Best for:** graphs where nodes have strong spatial locality or when cache-line affinity within a range matters. Can perform worse than Stride when nodes at the boundary of a pipeline are frequently contended.
+
+### Choosing a strategy
+
+| Scenario | Recommended strategy |
+|---|---|
+| Linear pipeline, uniform work | `Stride` |
+| Dense DAG with spatial locality | `ChunkedLinear` |
+| Unsure | `Stride` — generally lower p95 latency |
+
+Both strategies produce identical, deterministic output. The difference is purely in how threads are assigned nodes; correctness is unaffected.
+
+
 
 
 
@@ -90,8 +129,9 @@ Nodes share data through `Slot<T>` — no message passing, no boxing. The schedu
 > Open Changelog.md for full breakdown
 
 The latest updates include:
+- `Scheduler.Run()` now accepts a `PartitionStrategy` parameter — choose between `Stride` (interleaved, lower p95 on pipelines) and `ChunkedLinear` (contiguous blocks, favours spatial locality).
 - `GraphBuilder.Build()` now returns a `WorkContext` with all scheduling structures pre-allocated. `Scheduler.Run()` accepts a `WorkContext` directly, eliminating setup allocations at scheduling time.
--  The `Node` class now is cache aligned to reduce false sharing and improve performance under contention.
+- The `Node` class is now cache-aligned to reduce false sharing and improve performance under contention.
 ---
 
 ## How Scheduling Works
@@ -127,7 +167,13 @@ If the node is eligible, the scheduler:
 **`Scheduler`**
 | Method | Description |
 |---|---|
-| `void Run(WorkContext, int cycles, int slack, int threads)` | Run the pre-built work context. |
+| `void Run(WorkContext ctx, int cycles, int slack, int threads, PartitionStrategy strategy)` | Run the pre-built work context using the specified partition strategy. |
+
+**`PartitionStrategy`**
+| Value | Description |
+|---|---|
+| `Stride` | Distributes nodes across threads in an interleaved pattern (every N-th node per thread). Generally lower p95 latency on linear pipelines. |
+| `ChunkedLinear` | Distributes nodes across threads as contiguous blocks. Favours spatial locality within a range. |
 
 **`Scheduler.WorkContext`**
 | Member | Description |
