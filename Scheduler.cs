@@ -1,8 +1,11 @@
 namespace deltalag;
 
-/// <summary>
-/// Provides methods to execute scheduling algorithms on a directed graph for a specified number of cycles and threads.
-/// </summary>
+public enum PartitionStrategy
+{
+    ChunkedLinear,
+    Stride,
+}
+
 public class Scheduler
 {
     public struct WorkContext
@@ -15,7 +18,10 @@ public class Scheduler
         public int[] ParentOffsets;
     }
 
-    public void Run(WorkContext ctx, int cycles, int slack, int threads)
+    private int _doneThreads;
+    private int _barrierGeneration;
+
+    public void Run(WorkContext ctx, int cycles, int slack, int threads, PartitionStrategy strategy)
     {
         var nodeArray = ctx.NodeArray;
         var edges = ctx.Edges;
@@ -24,7 +30,6 @@ public class Scheduler
         var parentOffsetsArray = ctx.ParentOffsets;
         int nodeCount = nodeArray.Length;
 
-        // Trust user if they give a positive, reasonable value
         bool trustUser = threads > 0 && threads <= Environment.ProcessorCount * 2;
         int threadCount;
         if (trustUser)
@@ -37,30 +42,58 @@ public class Scheduler
         }
         int chunkSize = nodeCount / threadCount;
 
-        // nodes get chunked and passed out. threads loop until their chunks min work is == cycles.
         Parallel.For(0, threadCount, t =>
         {
-            int start = t * chunkSize;
-            int end = (t == threadCount - 1) ? nodeCount : start + chunkSize;
-            bool allDone = false;
+            int localStart = 0;
+            int localEnd = 0;
+            int localStep = 1;
 
+            switch (strategy)
+            {
+                case PartitionStrategy.ChunkedLinear:
+                    localStart = t * chunkSize;
+                    localEnd = (t == threadCount - 1) ? nodeCount : localStart + chunkSize;
+                    break;
+
+                case PartitionStrategy.Stride:
+                    localStart = t;
+                    localEnd = nodeCount;
+                    localStep = threadCount;
+                    break;
+            }
+
+            bool allDone = false;
             while (!allDone)
             {
                 allDone = true;
-                for (int i = start; i < end; i++)
-                {
 
+                for (int i = localStart; i < localEnd; i += localStep)
+                {
                     int myWork = nodeArray[i].WorkDone;
                     if (myWork >= cycles) continue;
 
                     allDone = false;
-                    // workSnap is the cycle we can work on. if it's -1, we can't work. if it's < cycles, we can work. if it's >= cycles, we can't work.
+
                     int workSnap = helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
                     if (workSnap != -1 && workSnap < cycles && nodeArray[i].TryClaimWork(workSnap))
                     {
                         nodeArray[i].Task?.Invoke(workSnap);
                         nodeArray[i].PublishWorkDone(workSnap + 1);
                     }
+                }
+            }
+
+            int gen = Volatile.Read(ref _barrierGeneration);
+            if (Interlocked.Increment(ref _doneThreads) == threadCount)
+            {
+                Volatile.Write(ref _doneThreads, 0);
+                Interlocked.Increment(ref _barrierGeneration); // advance generation to release waiters
+            }
+            else
+            {
+                while (Volatile.Read(ref _barrierGeneration) == gen)
+                {
+                    Thread.SpinWait(5);
                 }
             }
         });
