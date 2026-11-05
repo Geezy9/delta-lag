@@ -1,6 +1,6 @@
 # delta-lag
 
-> Lock-free, parallel DAG scheduler for C# — distance constraints keep nodes in sync without locks.
+> Parallel DAG scheduler for C# — distance constraints keep nodes in sync without locks.
 
 Status: Experimental. Not production‑ready. APIs may change.
 
@@ -28,7 +28,12 @@ Areas where it excels:
 
 ## How it differs
 
-**TL;DR:** Fast. Deterministic. Lightweight.
+**TL;DR:** 
+- No global ready queue.
+- No work stealing.
+- No runtime graph traversal.
+- No allocations during execution.
+- No Locks
 
 In most schedulers, work flows through nodes. In delta-lag, nodes advance through work.
 
