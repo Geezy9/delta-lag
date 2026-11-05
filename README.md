@@ -10,24 +10,61 @@ Status: Experimental. Not production‑ready. APIs may change.
 git clone https://github.com/Geezy9/delta-lag.git
 cd delta-lag && dotnet build && dotnet run
 ```
-## Why
+## Why and What
 
-TLDR: Fast, Deterministic, lightweight.
+delta-lag is primarily a streaming DAG dataflow engine. You build the graph once, then execute it repeatedly.
 
-Most task schedulers do a great job maximizing throughput, but they pay for it with layers of locks, queues, and work-stealing algorithms. That’s great for general workloads, but overkill when you want predictable, low-overhead parallelism.
+Its architecture is designed for workloads where you know exactly what work must be performed, in what order, and how many times. In other words, a fixed DAG rather than a dynamically evolving task graph.
 
-Lock-free algorithms like ring buffers show how far you can get with nothing but atomic counters. delta-lag extends that idea to an entire DAG: every node progresses like a position in a ring buffer, coordinated only by distance constraints.
+Areas where it excels:
 
-No locks. No stealing. No global queues.
+- Audio processing
+- DSP pipelines
+- Telemetry fusion
+- Long-running, low-overhead processing loops
+- Game engine update pipelines
+- Time-budgeted execution loops
+   
 
-## Benchmark Snapshot
+## How it differs
 
-Representative run processing 300,000 tasks:
+**TL;DR:** Fast. Deterministic. Lightweight.
 
-| Engine | Tasks Processed | Time Taken | Memory Wasted (GC) | Efficiency |
-|---|---:|---:|---:|---|
-| TPL Dataflow | 300,000 | 15.6 ms | 2,371 KB | Baseline |
-| Delta-lag | 300,000 | 4.2 ms | 0 KB | 3.7x Faster |
+In most schedulers, work flows through nodes. In delta-lag, nodes advance through work.
+
+That shifts the scheduling question from:
+
+"What should run next?"
+
+to:
+
+"How far ahead is each node relative to its neighbors?"
+
+By combining that model with a static CSR graph and pre-allocated scheduling structures, delta-lag minimizes runtime overhead and synchronization costs.
+
+The tradeoff is that graphs are fixed at runtime and the scheduler does not perform dynamic load balancing.
+
+No locks. No work stealing. No global queues.
+
+
+## How Scheduling Works
+
+Before a node fires, `CanFire` checks two constraints:
+
+```
+parent.WorkDone >= node.WorkDone + 1    // parent must be ahead
+child.WorkDone  >= node.WorkDone - slack // node can't lap children
+```
+
+If the node is eligible, the scheduler:
+
+1. computes the next work unit with `CanFire`
+2. atomically claims that work unit with `TryClaimWork`
+3. runs `Task(workUnit)`
+4. publishes completion with `PublishWorkDone(workUnit + 1)`
+
+- `slack = 0` → strict lock-step (safe, no stale reads)  
+- `slack > 0` → pipeline parallelism (producer runs ahead; consumer may read older values)
 
 ## Warning:
 
@@ -120,40 +157,11 @@ Both strategies produce identical, deterministic output. The difference is purel
 
 
 
-
-
-
-
-## What Changed Recently 
-
-> Open Changelog.md for full breakdown
-
-The latest updates include:
-- `Scheduler.Run()` now accepts a `PartitionStrategy` parameter — choose between `Stride` (interleaved, lower p95 on pipelines) and `ChunkedLinear` (contiguous blocks, favours spatial locality).
-- `GraphBuilder.Build()` now returns a `WorkContext` with all scheduling structures pre-allocated. `Scheduler.Run()` accepts a `WorkContext` directly, eliminating setup allocations at scheduling time.
-- The `Node` class is now cache-aligned to reduce false sharing and improve performance under contention.
 ---
 
-## How Scheduling Works
-
-Before a node fires, `CanFire` checks two constraints:
-
-```
-parent.WorkDone >= node.WorkDone + 1    // parent must be ahead
-child.WorkDone  >= node.WorkDone - slack // node can't lap children
-```
-
-If the node is eligible, the scheduler:
-
-1. computes the next work unit with `CanFire`
-2. atomically claims that work unit with `TryClaimWork`
-3. runs `Task(workUnit)`
-4. publishes completion with `PublishWorkDone(workUnit + 1)`
-
-- `slack = 0` → strict lock-step (safe, no stale reads)  
-- `slack > 0` → pipeline parallelism (producer runs ahead; consumer may read older values)
-
----
+## Housekeeping 
+- **Release 1.0.2** has a deterministic Benchmark Harness, a Dataset, and Dataset Inspector
+- **Help Wanted** If you want to help out, Open a Pr. 
 
 ## API
 
