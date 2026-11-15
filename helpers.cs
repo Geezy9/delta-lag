@@ -1,7 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 namespace deltalag;
 
-internal class helpers
+internal class Helpers
 {
     public int[] inDegree(Graph g)
     {
@@ -87,11 +87,51 @@ internal class helpers
         }
     }
 
+    public static bool HasCycle(Graph g)
+    {
+        int n = g.nodes.Count;
+        int[] inDegree = new int[n];
+
+        for (int u = 0; u < n; u++)
+        {
+            for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
+            {
+                int v = g.edges[ei];
+                inDegree[v]++;
+            }
+        }
+
+        var queue = new Queue<int>();
+        for (int i = 0; i < n; i++)
+        {
+            if (inDegree[i] == 0)
+                queue.Enqueue(i);
+        }
+
+        int visited = 0;
+        while (queue.Count > 0)
+        {
+            int u = queue.Dequeue();
+            visited++;
+
+            for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
+            {
+                int v = g.edges[ei];
+                inDegree[v]--;
+                if (inDegree[v] == 0)
+                    queue.Enqueue(v);
+            }
+        }
+
+        return visited != n;
+    }
+
+
 
     // Returns the observed WorkDone value if the node can fire, or -1 if it cannot.
     // Returning the snapshot lets the caller use it directly in a CAS to prevent double-firing.
     [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-    public static int CanFire(
+    public static long CanFire(
         int i,
         int slack,
         // Use an array instead of a List to keep data contiguous in memory
@@ -103,10 +143,10 @@ internal class helpers
     {
         // Fetch work once
         ref var nodeRef = ref nodes[i];
-        int myWork = nodeRef.WorkDone;
+        long myWork = nodeRef.WorkDone;
 
-        int minParentWork = myWork + 1;
-        int minChildWork = myWork - slack;
+        long minParentWork = myWork + 1;
+        long minChildWork = myWork - slack;
 
         int parentStart = parentOffsets[i];
         int parentEnd = parentOffsets[i + 1];

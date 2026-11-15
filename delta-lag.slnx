@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="deltalag.csproj" />
+  <Project Path="deltalag.Tests/deltalag.Tests.csproj" />
+</Solution>
