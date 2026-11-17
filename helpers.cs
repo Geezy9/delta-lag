@@ -5,8 +5,7 @@ internal class Helpers
 {
     public int[] inDegree(Graph g)
     {
-        var nodes = g.nodes;
-        int[] inDegree = new int[nodes.Count];
+        int[] inDegree = new int[g.NodeCount];
         for (int i = 0; i < inDegree.Length; i++)
         {
             for (int ei = g.offsets[i]; ei < g.offsets[i + 1]; ei++)
@@ -20,7 +19,7 @@ internal class Helpers
     }
     public int[] Plink(Graph g)
     {
-        int l = g.nodes.Count;
+        int l = g.NodeCount;
         int[] parent = Enumerable.Repeat(-1, l).ToArray();
 
         for (int i = 0; i < l; i++)
@@ -41,7 +40,7 @@ internal class Helpers
     }
     public int[] outDegree(Graph g)
     {
-        int l = g.nodes.Count;
+        int l = g.NodeCount;
         int[] outDeg = new int[l];
 
         for (int i = 0; i < l; i++)
@@ -51,7 +50,7 @@ internal class Helpers
     }
     public static void BuildReverseCSR(Graph g, out List<int> parentEdges, out List<int> parentOffsets)
     {
-        int n = g.nodes.Count;
+        int n = g.NodeCount;
 
         parentOffsets = new List<int>(new int[n + 1]);
         parentEdges = new List<int>(g.edges.Count);
@@ -89,7 +88,7 @@ internal class Helpers
 
     public static bool HasCycle(Graph g)
     {
-        int n = g.nodes.Count;
+        int n = g.NodeCount;
         int[] inDegree = new int[n];
 
         for (int u = 0; u < n; u++)

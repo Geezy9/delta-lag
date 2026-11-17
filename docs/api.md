@@ -1,78 +1,92 @@
-# API Spec
+# API Quick Reference
 
 ## Target
+
 - .NET 10+
 
 ## Namespace
+
 - `deltalag`
 
-## Core Flow
-1. Build a graph with `GraphBuilder`.
-2. Compile it with `Build()`.
-3. Run it with `Scheduler.Run()` and a `Config`.
+## Core flow
 
-## GraphBuilder
+1. `GraphBuilder builder = new();`
+2. `builder.AddNode(...)`
+3. `builder.AddEdge(from, to)`
+4. `Config config = new() { ... }`
+5. `var ctx = builder.Build(config)`
+6. `new Scheduler().Run(ctx, config)`
 
-### `int AddNode(Action<int>? task = null)`
-Adds a node and optional task. Returns the node index.
+## Key APIs
 
-### `void AddEdge(int from, int to)`
-Adds a directed edge (`from -> to`).
+### GraphBuilder
 
-### `Scheduler.WorkContext Build()`
-Compiles the graph to CSR arrays and prebuilds reverse edges.
-Throws `InvalidOperationException` if the graph has a cycle.
+- `int AddNode(Action<int>? task = null)`
+- `void AddEdge(int from, int to)`
+- `Scheduler.WorkContext Build(Config con)`
 
-## Scheduler
+### Scheduler
 
-### `void Run(Scheduler.WorkContext ctx, Config config)`
-Runs the graph until each node reaches `config.Cycles` work units.
+- `void Run(Scheduler.WorkContext ctx, Config config)`
 
-`config` fields used by the scheduler:
+### Scheduler.WorkContext (`ref struct`)
+
+- `Node[] NodeArray`
+- `int[] Edges`
+- `int[] Offsets`
+- `int[] ParentEdges`
+- `int[] ParentOffsets`
+- `Action<int>?[] Tasks`
+
+### Node (`struct`, 128 bytes)
+
+- `long WorkClaimed { get; }`
+- `long WorkDone { get; set; }`
+- `bool TryClaimWork(long expected)`
+- `void PublishWorkDone(long newValue)`
+
+### Graph
+
+- `int NodeCount`
+- `List<int> edges`
+- `List<int> offsets`
+
+### KaryInjector
+
+- `static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)`
+
+### Slot\<T\>
+
+- `T Value`
+
+### Ring\<T\>
+
+- `T[] Buffers`
+- `Ring(int size)`
+- `static Ring<T> FromCon(Config con)`
+- `T Read(long workUnit)`
+- `void Write(long workUnit, T payload)`
+
+### Config (main fields)
+
 - `Cycles`
 - `Slack`
 - `Threads`
 - `Strategy`
 - `SeperateRootThread`
+- `InjectNodes`
+- `K`
+- `MaxFanIn`
+- `MaxFanOut`
 
-## PartitionStrategy
+### PartitionStrategy
+
 - `ChunkedLinear`
 - `Stride`
 - `Clustered`
 - `Leveled`
 - `DepthFirst`
 
-## Scheduler.WorkContext
-- `Graph Graph`
-- `Node[] NodeArray`
-- `int[] Edges`
-- `int[] Offsets`
-- `int[] ParentEdges`
-- `int[] ParentOffsets`
+## Full spec
 
-## Node
-
-### `long WorkClaimed`
-Highest claimed work index.
-
-### `long WorkDone`
-Highest published completed work index.
-
-### `Action<int>? Task`
-Task delegate for the node.
-
-### `bool TryClaimWork(long expected)`
-Atomically claims the next work unit.
-
-### `void PublishWorkDone(long newValue)`
-Publishes completion.
-
-## Slot<T>
-
-### `T Value`
-Typed shared value used by node closures.
-
-## Notes
-- Graph must be a DAG.
-- Scheduler uses lock-free atomics (`Interlocked`/`Volatile`).
-- `slack = 0` gives strict lock-step progression.
+See [api-spec.md](api-spec.md).

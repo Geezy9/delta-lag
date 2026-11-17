@@ -2,15 +2,22 @@
 
 public static class KaryInjector
 {
-    public static Scheduler.WorkContext InjectKaryTree(Scheduler.WorkContext ctx, Config con)
+    public static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)
     {
-        if (ctx.Graph is null)
-            throw new ArgumentNullException(nameof(ctx), "WorkContext.Graph cannot be null.");
+        if (graph is null)
+            throw new ArgumentNullException(nameof(graph), "Graph cannot be null.");
 
-        Graph sourceGraph = ctx.Graph;
-        int originalNodeCount = sourceGraph.nodes.Count;
+        Graph sourceGraph = graph;
+        int originalNodeCount = sourceGraph.NodeCount;
         if (originalNodeCount == 0)
-            return ctx;
+            return new Scheduler.WorkContext
+            {
+                NodeArray = Array.Empty<Node>(),
+                Edges = Array.Empty<int>(),
+                Offsets = new[] { 0 },
+                ParentEdges = Array.Empty<int>(),
+                ParentOffsets = new[] { 0 },
+            };
 
         int k = Math.Max(2, con.K);
         int fanOutLimit = NormalizeLimit(con.MaxFanOut);
@@ -19,23 +26,30 @@ public static class KaryInjector
         int fanInBranch = Math.Min(k, fanInLimit);
 
         if (!RequiresInjection(sourceGraph, fanOutLimit, fanInLimit))
-            return ctx;
+        {
+            Helpers.BuildReverseCSR(sourceGraph, out var sourceParentEdges, out var sourceParentOffsets);
 
-        var nodes = new List<Node>(sourceGraph.nodes.Count);
-        nodes.AddRange(sourceGraph.nodes);
+            return new Scheduler.WorkContext
+            {
+                NodeArray = new Node[originalNodeCount],
+                Edges = sourceGraph.edges.ToArray(),
+                Offsets = sourceGraph.offsets.ToArray(),
+                ParentEdges = sourceParentEdges.ToArray(),
+                ParentOffsets = sourceParentOffsets.ToArray(),
+            };
+        }
 
         var adjacency = BuildAdjacency(sourceGraph);
 
-        ReduceFanOut(adjacency, nodes, originalNodeCount, fanOutLimit, fanOutBranch);
-        ReduceFanIn(adjacency, nodes, fanInLimit, fanInBranch);
+        ReduceFanOut(adjacency, originalNodeCount, fanOutLimit, fanOutBranch);
+        ReduceFanIn(adjacency, fanInLimit, fanInBranch);
 
-        Graph optimized = BuildGraph(nodes, adjacency);
+        Graph optimized = BuildGraph(adjacency);
         Helpers.BuildReverseCSR(optimized, out var parentEdges, out var parentOffsets);
 
         return new Scheduler.WorkContext
         {
-            Graph = optimized,
-            NodeArray = optimized.nodes.ToArray(),
+            NodeArray = new Node[optimized.NodeCount],
             Edges = optimized.edges.ToArray(),
             Offsets = optimized.offsets.ToArray(),
             ParentEdges = parentEdges.ToArray(),
@@ -47,7 +61,7 @@ public static class KaryInjector
 
     private static bool RequiresInjection(Graph graph, int fanOutLimit, int fanInLimit)
     {
-        int nodeCount = graph.nodes.Count;
+        int nodeCount = graph.NodeCount;
 
         if (fanOutLimit != int.MaxValue)
         {
@@ -79,7 +93,7 @@ public static class KaryInjector
 
     private static List<List<int>> BuildAdjacency(Graph graph)
     {
-        int nodeCount = graph.nodes.Count;
+        int nodeCount = graph.NodeCount;
         var adjacency = new List<List<int>>(nodeCount);
 
         for (int node = 0; node < nodeCount; node++)
@@ -100,7 +114,6 @@ public static class KaryInjector
 
     private static void ReduceFanOut(
         List<List<int>> adjacency,
-        List<Node> nodes,
         int originalNodeCount,
         int fanOutLimit,
         int branchFactor)
@@ -130,7 +143,7 @@ public static class KaryInjector
                         continue;
                     }
 
-                    int injected = AddInjectedNode(adjacency, nodes);
+                    int injected = AddInjectedNode(adjacency);
                     List<int> injectedChildren = adjacency[injected];
                     for (int j = 0; j < count; j++)
                         injectedChildren.Add(level[i + j]);
@@ -147,7 +160,6 @@ public static class KaryInjector
 
     private static void ReduceFanIn(
         List<List<int>> adjacency,
-        List<Node> nodes,
         int fanInLimit,
         int branchFactor)
     {
@@ -180,7 +192,7 @@ public static class KaryInjector
                         continue;
                     }
 
-                    int injected = AddInjectedNode(adjacency, nodes);
+                    int injected = AddInjectedNode(adjacency);
                     for (int j = 0; j < count; j++)
                         adjacency[level[i + j]].Add(injected);
 
@@ -224,18 +236,16 @@ public static class KaryInjector
         }
     }
 
-    private static int AddInjectedNode(List<List<int>> adjacency, List<Node> nodes)
+    private static int AddInjectedNode(List<List<int>> adjacency)
     {
-        int index = nodes.Count;
-        nodes.Add(new Node());
+        int index = adjacency.Count;
         adjacency.Add(new List<int>());
         return index;
     }
 
-    private static Graph BuildGraph(List<Node> nodes, List<List<int>> adjacency)
+    private static Graph BuildGraph(List<List<int>> adjacency)
     {
-        var graph = new Graph();
-        graph.nodes.AddRange(nodes);
+        var graph = new Graph { NodeCount = adjacency.Count };
 
         graph.offsets.Add(0);
         int edgeCount = 0;

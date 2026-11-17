@@ -14,22 +14,26 @@ public class GraphBuilder
 
     public void AddEdge(int from, int to)
     {
-        var count = adjacency.Count;
+        if ((uint)from >= (uint)adjacency.Count)
+            throw new ArgumentOutOfRangeException(nameof(from));
+
+        if ((uint)to >= (uint)adjacency.Count)
+            throw new ArgumentOutOfRangeException(nameof(to));
+
         adjacency[from].Add(to);
 
     }
 
-    private bool ValidateAllEdges(Scheduler.WorkContext ctx)
+    private bool ValidateAllEdgeRanges(Scheduler.WorkContext ctx)
     {
-        for (int i = 0; i > ctx.Edges.Count(); i++)
+        for (int i = 0; i < ctx.NodeArray.Length; i++)
         {
-            var node = ctx.NodeArray[i];
-            int StartEdgeIndex = ctx.Offsets[i];
-            int EndEdgeIndex = ctx.Offsets[i + 1];
-            for (int EdgeIndex = StartEdgeIndex; EdgeIndex < EndEdgeIndex; EdgeIndex++)
+            int startEdgeIndex = ctx.Offsets[i];
+            int endEdgeIndex = ctx.Offsets[i + 1];
+            for (int edgeIndex = startEdgeIndex; edgeIndex < endEdgeIndex; edgeIndex++)
             {
-                var TIndex = ctx.Edges[EdgeIndex];
-                if (TIndex < 0 || TIndex >= ctx.NodeArray.Length)
+                int targetIndex = ctx.Edges[edgeIndex];
+                if (targetIndex < 0 || targetIndex >= ctx.NodeArray.Length)
                 {
                     return false;
                 }
@@ -40,14 +44,12 @@ public class GraphBuilder
 
     public Scheduler.WorkContext Build(Config con)
     {
-        var g = new Graph();
-        var output = new Scheduler.WorkContext();
+        var g = new Graph { NodeCount = adjacency.Count };
 
         g.offsets.Add(0);
 
         for (int i = 0; i < adjacency.Count; i++)
         {
-            g.nodes.Add(new Node { Task = tasks[i] });
             g.edges.AddRange(adjacency[i]);
             g.offsets.Add(g.edges.Count);
         }
@@ -57,34 +59,34 @@ public class GraphBuilder
             throw new InvalidOperationException("Graph contains a cycle.");
         }
 
-
-
-        Helpers.BuildReverseCSR(g, out var parentEdges, out var parentOffsets);
-
-        var ir = new Scheduler.WorkContext
-        {
-            Graph = g,
-            NodeArray = g.nodes.ToArray(),
-            Edges = g.edges.ToArray(),
-            Offsets = g.offsets.ToArray(),
-            ParentEdges = parentEdges.ToArray(),
-            ParentOffsets = parentOffsets.ToArray(),
-        };
-
+        Scheduler.WorkContext output;
         if (con.InjectNodes)
         {
-            output = KaryInjector.InjectKaryTree(ir, con);
+            output = KaryInjector.InjectKaryTree(g, con);
         }
         else
         {
-            output = ir;
+            Helpers.BuildReverseCSR(g, out var parentEdges, out var parentOffsets);
+
+            output = new Scheduler.WorkContext
+            {
+                NodeArray = new Node[g.NodeCount],
+                Edges = g.edges.ToArray(),
+                Offsets = g.offsets.ToArray(),
+                ParentEdges = parentEdges.ToArray(),
+                ParentOffsets = parentOffsets.ToArray(),
+            };
         }
 
-        if (ValidateAllEdges(output))
+        if (!ValidateAllEdgeRanges(output))
         {
             throw new IndexOutOfRangeException();
         }
 
+        // Injected nodes are appended after the originals, so indices line up; their entries stay null.
+        var taskArray = new Action<int>?[output.NodeArray.Length];
+        tasks.CopyTo(taskArray);
+        output.Tasks = taskArray;
 
         return output;
     }
