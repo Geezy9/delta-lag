@@ -1,6 +1,5 @@
 namespace deltalag;
 
-// AI Generated
 public static class KaryInjector
 {
     public static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)
