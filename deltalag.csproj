@@ -1,15 +1,25 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-	<Version>1.1.0</Version>
+	<Version>2.0.0</Version>
 	<TargetFramework>net10.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
+	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	<DefaultItemExcludes>$(DefaultItemExcludes);deltalag.Tests\**</DefaultItemExcludes>
+
+	<PackageId>deltalag</PackageId>
+	<Authors>Geezy9</Authors>
+	<Description>A lock-free, deterministic DAG scheduler for .NET that replaces task queues and work stealing with pure arithmetic.</Description>
+	<PackageLicenseExpression>MIT</PackageLicenseExpression>
+	<PackageReadmeFile>README.md</PackageReadmeFile>
+	<RepositoryUrl>https://github.com/Geezy9/delta-lag</RepositoryUrl>
+	<RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <ItemGroup>
-	<Compile Remove="UnitTest1.cs" />
+	<None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

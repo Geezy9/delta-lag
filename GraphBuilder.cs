@@ -1,30 +1,40 @@
 namespace deltalag;
 
+/// <summary>
+/// Incremental builder for constructing and compiling directed acyclic execution graphs.
+/// </summary>
 public class GraphBuilder
 {
-    private readonly List<List<int>> adjacency = new();
-    private readonly List<Action<int>?> tasks = new();
+    private readonly List<List<int>> _adjacency = new();
+    private readonly List<Action<int>?> _tasks = new();
 
+    /// <summary>
+    /// Adds a node and optional per-cycle work delegate to the graph.
+    /// </summary>
+    /// <param name="task">Optional delegate invoked with the current 0-based cycle index.</param>
+    /// <returns>The 0-based node identifier.</returns>
     public int AddNode(Action<int>? task = null)
     {
-        adjacency.Add(new List<int>());
-        tasks.Add(task);
-        return adjacency.Count - 1;
+        _adjacency.Add(new List<int>());
+        _tasks.Add(task);
+        return _adjacency.Count - 1;
     }
 
+    /// <summary>
+    /// Adds a directed dependency edge (<paramref name="from"/> -&gt; <paramref name="to"/>).
+    /// </summary>
     public void AddEdge(int from, int to)
     {
-        if ((uint)from >= (uint)adjacency.Count)
+        if ((uint)from >= (uint)_adjacency.Count)
             throw new ArgumentOutOfRangeException(nameof(from));
 
-        if ((uint)to >= (uint)adjacency.Count)
+        if ((uint)to >= (uint)_adjacency.Count)
             throw new ArgumentOutOfRangeException(nameof(to));
 
-        adjacency[from].Add(to);
-
+        _adjacency[from].Add(to);
     }
 
-    private bool ValidateAllEdgeRanges(Scheduler.WorkContext ctx)
+    private static bool ValidateAllEdgeRanges(Scheduler.WorkContext ctx)
     {
         for (int i = 0; i < ctx.NodeArray.Length; i++)
         {
@@ -33,7 +43,7 @@ public class GraphBuilder
             for (int edgeIndex = startEdgeIndex; edgeIndex < endEdgeIndex; edgeIndex++)
             {
                 int targetIndex = ctx.Edges[edgeIndex];
-                if (targetIndex < 0 || targetIndex >= ctx.NodeArray.Length)
+                if ((uint)targetIndex >= (uint)ctx.NodeArray.Length)
                 {
                     return false;
                 }
@@ -42,15 +52,26 @@ public class GraphBuilder
         return true;
     }
 
-    public Scheduler.WorkContext Build(Config con)
+    /// <summary>
+    /// Validates acyclicity, optionally injects k-ary relay trees, and compiles the graph and schedules into a <see cref="Scheduler.WorkContext"/>.
+    /// </summary>
+    public Scheduler.WorkContext Build(Config config)
     {
-        var g = new Graph { NodeCount = adjacency.Count };
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentOutOfRangeException.ThrowIfNegative(config.Cycles);
+        ArgumentOutOfRangeException.ThrowIfNegative(config.Slack);
+
+        var g = new Graph { NodeCount = _adjacency.Count };
+        if (g.NodeCount <= 0)
+        {
+            throw new InvalidOperationException("Graph must contain at least one node.");
+        }
 
         g.offsets.Add(0);
 
-        for (int i = 0; i < adjacency.Count; i++)
+        for (int i = 0; i < _adjacency.Count; i++)
         {
-            g.edges.AddRange(adjacency[i]);
+            g.edges.AddRange(_adjacency[i]);
             g.offsets.Add(g.edges.Count);
         }
 
@@ -60,9 +81,9 @@ public class GraphBuilder
         }
 
         Scheduler.WorkContext output;
-        if (con.InjectNodes)
+        if (config.InjectNodes)
         {
-            output = KaryInjector.InjectKaryTree(g, con);
+            output = KaryInjector.InjectKaryTree(g, config);
         }
         else
         {
@@ -73,50 +94,43 @@ public class GraphBuilder
                 NodeArray = new Node[g.NodeCount],
                 Edges = g.edges.ToArray(),
                 Offsets = g.offsets.ToArray(),
-                ParentEdges = parentEdges.ToArray(),
-                ParentOffsets = parentOffsets.ToArray(),
+                ParentEdges = parentEdges,
+                ParentOffsets = parentOffsets,
                 MaxEdgeHops = 1,
             };
         }
 
         if (!ValidateAllEdgeRanges(output))
         {
-            throw new IndexOutOfRangeException();
+            throw new IndexOutOfRangeException("Compiled graph contains an out-of-range edge target.");
         }
 
         // Injected nodes are appended after the originals, so indices line up; their entries stay null.
         var taskArray = new Action<int>?[output.NodeArray.Length];
-        tasks.CopyTo(taskArray);
+        _tasks.CopyTo(taskArray);
         output.Tasks = taskArray;
 
         int nodeCount = output.NodeArray.Length;
-        bool trustUser = con.Threads > 0 && con.Threads <= Environment.ProcessorCount * 2;
-        int threadCount;
-        if (trustUser)
-        {
-            threadCount = Math.Min(con.Threads, Environment.ProcessorCount);
-        }
-        else
-        {
-            threadCount = Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
-        }
+        int threadCount = config.Threads > 0
+            ? Math.Min(config.Threads, Environment.ProcessorCount)
+            : Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
 
-        threadCount = Math.Min(threadCount, Math.Max(1, nodeCount));
+        threadCount = Math.Min(threadCount, nodeCount);
 
-        output.Cycles = con.Cycles;
-        output.Slack = con.Slack;
+        output.Cycles = config.Cycles;
+        output.Slack = config.Slack;
         output.ThreadCount = threadCount;
-        output.ThreadAffinity = con.ThreadAffinity;
+        output.ThreadAffinity = config.ThreadAffinity;
         output.ThreadSchedules = ThreadSchedules.Build(
             nodeCount,
             threadCount,
-            con.Strategy,
+            config.Strategy,
             output.Edges,
             output.Offsets,
             output.ParentEdges,
             output.ParentOffsets,
-            con.SeparateRootThread,
-            con.SeparateSinkThread);
+            config.SeparateRootThread,
+            config.SeparateSinkThread);
 
         return output;
     }

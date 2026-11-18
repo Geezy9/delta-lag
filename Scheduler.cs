@@ -2,31 +2,71 @@ using System.Runtime.ExceptionServices;
 
 namespace deltalag;
 
+/// <summary>
+/// Controls how compiled graph nodes are statically assigned across worker threads.
+/// </summary>
 public enum PartitionStrategy
 {
-    ChunkedLinear,
+    /// <summary>Distributes node indices round-robin across worker threads (default).</summary>
     Stride,
+
+    /// <summary>Splits node indices into contiguous slices across worker threads.</summary>
+    ChunkedLinear,
+
+    /// <summary>Orders connected components via undirected BFS and assigns contiguous chunks per thread.</summary>
     Clustered,
+
+    /// <summary>Groups nodes by topological depth and stripes levels across worker threads.</summary>
     Leveled,
+
+    /// <summary>Orders nodes via depth-first traversal from roots and assigns contiguous chunks per thread.</summary>
     DepthFirst,
 }
 
+/// <summary>
+/// Lock-free DAG execution engine backed by a persistent, reusable pool of worker threads.
+/// </summary>
 public class Scheduler : IDisposable
 {
+    /// <summary>
+    /// Stack-only compiled graph and execution schedule produced by <see cref="GraphBuilder.Build"/>.
+    /// </summary>
     public ref struct WorkContext
     {
+        /// <summary>Per-node cache-padded atomic progress counters.</summary>
         public Node[] NodeArray;
+
+        /// <summary>Forward CSR target node indices.</summary>
         public int[] Edges;
+
+        /// <summary>Forward CSR row offsets (<c>NodeArray.Length + 1</c>).</summary>
         public int[] Offsets;
+
+        /// <summary>Reverse CSR parent node indices.</summary>
         public int[] ParentEdges;
+
+        /// <summary>Reverse CSR row offsets (<c>NodeArray.Length + 1</c>).</summary>
         public int[] ParentOffsets;
+
+        /// <summary>Per-node task delegates (<c>null</c> for injected relay nodes).</summary>
         public Action<int>?[] Tasks;
+
+        /// <summary>Target completed work units per node.</summary>
         public int Cycles;
+
+        /// <summary>Maximum allowed downstream lag per hop.</summary>
         public int Slack;
+
+        /// <summary>Effective worker thread count.</summary>
         public int ThreadCount;
+
+        /// <summary>Pre-partitioned node ID schedules per worker thread.</summary>
         public int[][] ThreadSchedules;
+
+        /// <summary>Whether worker threads attempt to pin to logical CPU cores.</summary>
         public bool ThreadAffinity;
 
+        /// <summary>Maximum hop distance between any original node and its original children across injected relays.</summary>
         public int MaxEdgeHops { get; set; }
     }
 
@@ -90,31 +130,69 @@ public class Scheduler : IDisposable
     private bool _poolThreadAffinity;
     private RunState? _currentRun;
     private long _epoch;
+    private bool _isRunning;
     private bool _stopRequested;
     private bool _disposed;
 
+    /// <summary>
+    /// Executes <paramref name="ctx"/> until all nodes complete <see cref="WorkContext.Cycles"/> work units.
+    /// </summary>
     public void Run(WorkContext ctx)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        int threadCount = ctx.ThreadCount;
-        if (threadCount <= 0)
-            return;
-
-        EnsurePool(threadCount, ctx.ThreadAffinity);
-
-        var run = new RunState(ctx);
-        _doneSignal.Reset();
+        ValidateContext(ctx);
 
         lock (_sync)
         {
-            _currentRun = run;
-            _epoch++;
-            Monitor.PulseAll(_sync);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_isRunning)
+                throw new InvalidOperationException("Scheduler is already running.");
+
+            _isRunning = true;
         }
 
-        _doneSignal.Wait();
-        run.ThrowIfFaulted();
+        try
+        {
+            int threadCount = ctx.ThreadCount;
+            EnsurePool(threadCount, ctx.ThreadAffinity);
+
+            var run = new RunState(ctx);
+            _doneSignal.Reset();
+
+            lock (_sync)
+            {
+                _currentRun = run;
+                _epoch++;
+                Monitor.PulseAll(_sync);
+            }
+
+            _doneSignal.Wait();
+            run.ThrowIfFaulted();
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                _currentRun = null;
+                _isRunning = false;
+            }
+        }
+    }
+
+    private static void ValidateContext(WorkContext ctx)
+    {
+        if (ctx.ThreadCount <= 0
+            || ctx.NodeArray is null || ctx.NodeArray.Length <= 0
+            || ctx.Tasks is null || ctx.Tasks.Length < ctx.NodeArray.Length
+            || ctx.Edges is null
+            || ctx.Offsets is null || ctx.Offsets.Length != ctx.NodeArray.Length + 1
+            || ctx.ParentEdges is null
+            || ctx.ParentOffsets is null || ctx.ParentOffsets.Length != ctx.NodeArray.Length + 1
+            || ctx.ThreadSchedules is null || ctx.ThreadSchedules.Length < ctx.ThreadCount)
+        {
+            throw new ArgumentException("WorkContext is invalid or uninitialized.", nameof(ctx));
+        }
     }
 
     private void EnsurePool(int threadCount, bool threadAffinity)
@@ -266,12 +344,22 @@ public class Scheduler : IDisposable
         _poolThreadCount = 0;
     }
 
+    /// <summary>
+    /// Stops and joins pooled worker threads and releases synchronization primitives.
+    /// </summary>
     public void Dispose()
     {
-        if (_disposed)
-            return;
+        lock (_sync)
+        {
+            if (_disposed)
+                return;
 
-        _disposed = true;
+            if (_isRunning)
+                throw new InvalidOperationException("Cannot dispose Scheduler while a run is in progress.");
+
+            _disposed = true;
+        }
+
         ShutdownPool();
         _doneSignal.Dispose();
     }

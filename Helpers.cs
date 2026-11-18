@@ -1,16 +1,17 @@
 ﻿using System.Runtime.CompilerServices;
+
 namespace deltalag;
 
-internal class Helpers
+internal static class Helpers
 {
-    internal static void BuildReverseCSR(Graph g, out List<int> parentEdges, out List<int> parentOffsets)
+    internal static void BuildReverseCSR(Graph g, out int[] parentEdges, out int[] parentOffsets)
     {
         int n = g.NodeCount;
 
-        parentOffsets = new List<int>(new int[n + 1]);
-        parentEdges = new List<int>(g.edges.Count);
+        parentOffsets = new int[n + 1];
+        parentEdges = new int[g.edges.Count];
 
-        // Count In-degrees
+        // Count in-degrees
         for (int u = 0; u < n; u++)
         {
             for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
@@ -24,12 +25,8 @@ internal class Helpers
         for (int i = 1; i <= n; i++)
             parentOffsets[i] += parentOffsets[i - 1];
 
-        // Allocate space
-        for (int i = 0; i < g.edges.Count; i++)
-            parentEdges.Add(0);
-
         // Fill reverse edges
-        int[] cursor = parentOffsets.ToArray();
+        int[] cursor = (int[])parentOffsets.Clone();
 
         for (int u = 0; u < n; u++)
         {
@@ -146,12 +143,3 @@ internal class Helpers
         return myWork;
     }
 }
-
-
-
-
-
-
-
-
-

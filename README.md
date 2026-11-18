@@ -6,7 +6,7 @@ Most parallel schedulers spend a surprising amount of time coordinating work: pu
 
 No global queues. No locks. No work stealing. No allocations in the hot loop.
 
-> **Status:** Experimental (`v1.1.0`). APIs may change. Requires **.NET 10+**.
+> **Version:** `v2.0.0` · Requires **.NET 10+**.
 
 ---
 
@@ -103,7 +103,7 @@ scheduler.Run(ctx);
 
 Because nodes can run ahead of their dependents when `Slack > 0`, choose the edge buffer that matches your `Slack` setting:
 
-- **`Ring<T>`** — A typed, non-boxing SPSC ring buffer for per-edge communication when `Slack > 0` or `InjectNodes = true`. **Prefer `Ring<T>.FromContext(ctx, config)`**: it reads `ctx.MaxEdgeHops` from the built graph and sizes the buffer to `ctx.MaxEdgeHops * (Slack + 1)` (rounded up to a power of two), preventing producers from overwriting unread slots. Avoid `Ring<T>.FromCon(config)` unless you know your graph is strictly single-hop—it hardcodes `maxHops = 1` (`Slack + 1`), so if `InjectNodes = true` adds relay hops (or `Slack` is enforced per hop across a multi-hop path), producers can run `MaxEdgeHops * (Slack + 1)` cycles ahead and silently overwrite unread data.
+- **`Ring<T>`** — A typed, non-boxing SPSC ring buffer for per-edge communication when `Slack > 0` or `InjectNodes = true`. **Prefer `Ring<T>.FromContext(ctx, config)`**: it reads `ctx.MaxEdgeHops` from the built graph and sizes the buffer to `ctx.MaxEdgeHops * (Slack + 1)` (rounded up to a power of two), preventing producers from overwriting unread slots. Avoid `Ring<T>.FromConfig(config)` unless you know your graph is strictly single-hop—it hardcodes `maxHops = 1` (`Slack + 1`), so if `InjectNodes = true` adds relay hops (or `Slack` is enforced per hop across a multi-hop path), producers can run `MaxEdgeHops * (Slack + 1)` cycles ahead and silently overwrite unread data.
 - **`Slot<T>`** — A single unbuffered value wrapper. Only safe when `Slack = 0` and `MaxEdgeHops == 1` (strict single-hop lock-step).
 
 ---

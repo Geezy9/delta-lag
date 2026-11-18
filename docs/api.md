@@ -24,7 +24,7 @@
 
 - `int AddNode(Action<int>? task = null)`
 - `void AddEdge(int from, int to)`
-- `Scheduler.WorkContext Build(Config con)`
+- `Scheduler.WorkContext Build(Config config)`
 
 ### Scheduler (`IDisposable`)
 
@@ -63,9 +63,9 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 ### Ring\<T\>
 
 - `Ring(int size)`
-- `static Ring<T> FromCon(Config con)`
-- `static Ring<T> FromCon(Config con, int maxHops)`
-- `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config con)`
+- `static Ring<T> FromConfig(Config config)`
+- `static Ring<T> FromConfig(Config config, int maxHops)`
+- `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config config)`
 - `T Read(long workUnit)`
 - `void Write(long workUnit, T payload)`
 
@@ -85,8 +85,8 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 
 ### PartitionStrategy
 
+- `Stride` *(default)*
 - `ChunkedLinear`
-- `Stride`
 - `Clustered`
 - `Leveled`
 - `DepthFirst`

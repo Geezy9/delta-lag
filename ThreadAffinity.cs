@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace deltalag;
 
-internal static class ThreadAffinity
+internal static partial class ThreadAffinity
 {
     internal static bool TryPinCurrentThread(int threadIndex)
     {
@@ -43,7 +43,8 @@ internal static class ThreadAffinity
             Thread.BeginThreadAffinity();
             try
             {
-                byte[] mask = new byte[cpuSetBytes];
+                Span<byte> mask = stackalloc byte[cpuSetBytes];
+                mask.Clear();
                 mask[coreIndex >> 3] = (byte)(1 << (coreIndex & 7));
                 if (sched_setaffinity(0, (nuint)cpuSetBytes, mask) == 0)
                     return true;
@@ -60,12 +61,12 @@ internal static class ThreadAffinity
         return false;
     }
 
-    [DllImport("kernel32.dll")]
-    private static extern nint GetCurrentThread();
+    [LibraryImport("kernel32.dll")]
+    private static partial nint GetCurrentThread();
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nuint SetThreadAffinityMask(nint hThread, nuint dwThreadAffinityMask);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial nuint SetThreadAffinityMask(nint hThread, nuint dwThreadAffinityMask);
 
-    [DllImport("libc", SetLastError = true)]
-    private static extern int sched_setaffinity(int pid, nuint cpusetsize, byte[] mask);
+    [LibraryImport("libc", SetLastError = true)]
+    private static partial int sched_setaffinity(int pid, nuint cpusetsize, ReadOnlySpan<byte> mask);
 }

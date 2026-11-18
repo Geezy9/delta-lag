@@ -29,13 +29,15 @@ Throws:
 
 - `ArgumentOutOfRangeException` when `from` or `to` is outside `0..nodeCount - 1`.
 
-### `Scheduler.WorkContext Build(Config con)`
+### `Scheduler.WorkContext Build(Config config)`
 
-Builds CSR forward/reverse edge arrays, allocates the `Node[]` state array, pre-allocates `ThreadSchedules`, captures `Cycles`, `Slack`, and `ThreadCount`, optionally injects k-ary relay nodes when `con.InjectNodes` is `true`, and populates `Tasks` (`Action<int>?[]`) aligned by node index. Original node indices (`0..N - 1`) are preserved when relay nodes are injected; injected nodes have `null` task entries.
+Builds CSR forward/reverse edge arrays, allocates the `Node[]` state array, pre-allocates `ThreadSchedules`, captures `Cycles`, `Slack`, and `ThreadCount`, optionally injects k-ary relay nodes when `config.InjectNodes` is `true`, and populates `Tasks` (`Action<int>?[]`) aligned by node index. Original node indices (`0..N - 1`) are preserved when relay nodes are injected; injected nodes have `null` task entries.
 
 Throws:
 
-- `InvalidOperationException` when the graph contains a cycle, or when `SeparateRootThread` / `SeparateSinkThread` leaves fewer than 1 general worker thread.
+- `ArgumentNullException` when `config` is `null`.
+- `ArgumentOutOfRangeException` when `config.Cycles < 0` or `config.Slack < 0` (or when `InjectNodes = true` and `MaxFanIn == 1` or `MaxFanOut == 1`).
+- `InvalidOperationException` when the graph is empty (`0` nodes), contains a cycle, or when `SeparateRootThread` / `SeparateSinkThread` leaves fewer than 1 general worker thread.
 - `IndexOutOfRangeException` when edge target validation fails.
 
 ## Scheduler (`IDisposable`)
@@ -49,11 +51,17 @@ Runs until each node reaches `ctx.Cycles` completed work units using the pre-all
 Throws:
 
 - `ObjectDisposedException` if `Scheduler` has been disposed.
+- `ArgumentException` if `ctx` is default/uninitialized or missing compiled arrays.
+- `InvalidOperationException` if another `Run` is already in progress on the same `Scheduler` instance.
 - Rethrows any unhandled task exception (or `AggregateException` if multiple workers fault).
 
 ### `void Dispose()`
 
 Signals worker threads to exit, joins them, and disposes internal synchronization primitives. Idempotent.
+
+Throws:
+
+- `InvalidOperationException` if called while a `Run` is actively in progress.
 
 ## Config
 
@@ -62,7 +70,7 @@ Signals worker threads to exit, joins them, and disposes internal synchronizatio
 - `Cycles` (`int`) target work units per node
 - `Slack` (`int`) allowed downstream lag
 - `Threads` (`int`) desired parallel worker count
-- `Strategy` (`PartitionStrategy`) partition method
+- `Strategy` (`PartitionStrategy`) partition method (`Stride` by default)
 - `SeparateRootThread` (`bool`) optional root-node thread isolation
 - `SeparateSinkThread` (`bool`) optional sink-node (out-degree `0`) thread isolation
 - `ThreadAffinity` (`bool`) optional core pinning (`t % Environment.ProcessorCount`) on Windows and Linux with graceful fallback
@@ -75,10 +83,10 @@ Signals worker threads to exit, joins them, and disposes internal synchronizatio
 
 Controls how nodes are assigned to worker threads (all strategies preserve correctness and deterministic outcomes):
 
+- `Stride` *(default, `0`)* — Distributes node indices round-robin (`node i` goes to `thread i % threadCount`).
+  - *Use When:* Uniform or wide graphs where adjacent node IDs have uneven cost or heavy contention, so interleaving balances load across threads (e.g., many independent feature extractors where odd/even or grouped nodes vary in CPU cost).
 - `ChunkedLinear` — Splits node indices `0..N - 1` into contiguous slices across threads (`thread t` gets a block of consecutive node IDs).
   - *Use When:* Simple linear pipelines or graphs where nodes were added in a natural locality order (e.g., an audio/signal processing chain `source -> filter -> gain -> sink` split into stages per thread).
-- `Stride` — Distributes node indices round-robin (`node i` goes to `thread i % threadCount`).
-  - *Use When:* Uniform or wide graphs where adjacent node IDs have uneven cost or heavy contention, so interleaving balances load across threads (e.g., many independent feature extractors where odd/even or grouped nodes vary in CPU cost).
 - `Clustered` — Traverses connected components breadth-first (following both children and parents) and assigns contiguous chunks of that order to each thread.
   - *Use When:* Graphs with multiple loosely connected or independent subgraphs where keeping neighboring nodes on the same thread improves cache locality and cuts cross-thread synchronization (e.g., running several independent simulation entities or physics islands in one graph).
 - `Leveled` — Groups nodes by topological depth (Kahn's BFS levels) and assigns entire levels round-robin across threads (or isolates level 0 on thread `0` when `SeparateRootThread` is `true`).
@@ -128,31 +136,31 @@ Allocates a ring buffer of length `size`.
 
 Throws:
 
-- `ArgumentException` when `size` is not a power of two.
+- `ArgumentException` when `size` is not a positive power of two.
 
-### `static Ring<T> FromCon(Config con)`
+### `static Ring<T> FromConfig(Config config)`
 
-Creates a `Ring<T>` sized for single-hop edges (`con.Slack + 1` rounded up to the next power of two). Equivalent to `FromCon(con, maxHops: 1)`.
-
-Throws:
-
-- `ArgumentNullException` when `con` is `null`.
-- `ArgumentOutOfRangeException` when `con.Slack < 0`.
-- `OverflowException` when `con.Slack == int.MaxValue`.
-
-### `static Ring<T> FromCon(Config con, int maxHops)`
-
-Creates a `Ring<T>` sized for multi-hop relay paths (`maxHops * (con.Slack + 1)` rounded up to the next power of two).
+Creates a `Ring<T>` sized for single-hop edges (`config.Slack + 1` rounded up to the next power of two). Equivalent to `FromConfig(config, maxHops: 1)`.
 
 Throws:
 
-- `ArgumentNullException` when `con` is `null`.
-- `ArgumentOutOfRangeException` when `con.Slack < 0` or `maxHops < 1`.
+- `ArgumentNullException` when `config` is `null`.
+- `ArgumentOutOfRangeException` when `config.Slack < 0`.
+- `OverflowException` when `config.Slack == int.MaxValue`.
+
+### `static Ring<T> FromConfig(Config config, int maxHops)`
+
+Creates a `Ring<T>` sized for multi-hop relay paths (`maxHops * (config.Slack + 1)` rounded up to the next power of two).
+
+Throws:
+
+- `ArgumentNullException` when `config` is `null`.
+- `ArgumentOutOfRangeException` when `config.Slack < 0` or `maxHops < 1`.
 - `OverflowException` when the computed capacity overflows `int`.
 
-### `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config con)`
+### `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config config)`
 
-Creates a `Ring<T>` sized from `ctx.MaxEdgeHops` (`FromCon(con, Math.Max(1, ctx.MaxEdgeHops))`). Use this when `InjectNodes = true` so edge buffers automatically accommodate injected relay depth.
+Creates a `Ring<T>` sized from `ctx.MaxEdgeHops` (`FromConfig(config, Math.Max(1, ctx.MaxEdgeHops))`). Use this when `InjectNodes = true` so edge buffers automatically accommodate injected relay depth.
 
 ### `T Read(long workUnit)`
 

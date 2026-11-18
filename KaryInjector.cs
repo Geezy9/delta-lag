@@ -8,27 +8,18 @@ namespace deltalag;
 /// </summary>
 internal static class KaryInjector
 {
-    internal static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)
+    internal static Scheduler.WorkContext InjectKaryTree(Graph graph, Config config)
     {
-        if (graph is null)
-            throw new ArgumentNullException(nameof(graph), "Graph cannot be null.");
+        ArgumentNullException.ThrowIfNull(graph);
 
         Graph sourceGraph = graph;
         int originalNodeCount = sourceGraph.NodeCount;
-        if (originalNodeCount == 0)
-            return new Scheduler.WorkContext
-            {
-                NodeArray = Array.Empty<Node>(),
-                Edges = Array.Empty<int>(),
-                Offsets = new[] { 0 },
-                ParentEdges = Array.Empty<int>(),
-                ParentOffsets = new[] { 0 },
-                MaxEdgeHops = 1,
-            };
+        if (originalNodeCount <= 0)
+            throw new InvalidOperationException("Graph must contain at least one node.");
 
-        int k = Math.Max(2, con.K);
-        int fanOutLimit = NormalizeLimit(con.MaxFanOut, nameof(con.MaxFanOut));
-        int fanInLimit = NormalizeLimit(con.MaxFanIn, nameof(con.MaxFanIn));
+        int k = Math.Max(2, config.K);
+        int fanOutLimit = NormalizeLimit(config.MaxFanOut, nameof(config.MaxFanOut));
+        int fanInLimit = NormalizeLimit(config.MaxFanIn, nameof(config.MaxFanIn));
         // Clamp branching factor to the degree limit so newly injected relays also obey the cap
         // (each relay has 1 edge on its root side and <= branchFactor edges on its leaf side).
         int fanOutBranch = Math.Min(k, fanOutLimit);
@@ -43,8 +34,8 @@ internal static class KaryInjector
                 NodeArray = new Node[originalNodeCount],
                 Edges = sourceGraph.edges.ToArray(),
                 Offsets = sourceGraph.offsets.ToArray(),
-                ParentEdges = sourceParentEdges.ToArray(),
-                ParentOffsets = sourceParentOffsets.ToArray(),
+                ParentEdges = sourceParentEdges,
+                ParentOffsets = sourceParentOffsets,
                 MaxEdgeHops = 1,
             };
         }
@@ -66,8 +57,8 @@ internal static class KaryInjector
             NodeArray = new Node[optimized.NodeCount],
             Edges = optimized.edges.ToArray(),
             Offsets = optimized.offsets.ToArray(),
-            ParentEdges = parentEdges.ToArray(),
-            ParentOffsets = parentOffsets.ToArray(),
+            ParentEdges = parentEdges,
+            ParentOffsets = parentOffsets,
             MaxEdgeHops = maxEdgeHops,
         };
     }

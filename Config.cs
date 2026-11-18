@@ -1,29 +1,40 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿namespace deltalag;
 
-namespace deltalag
+/// <summary>
+/// Execution and compilation settings consumed by <see cref="GraphBuilder.Build"/>.
+/// </summary>
+public class Config
 {
-    public class Config
-    {
-        public int Cycles; // Total Iterations 
-        public int Slack; // Maximum allowed distance between node counters
-        public int Threads; // Threads to use
-        public PartitionStrategy Strategy; // Node thread partition 
-        public bool InjectNodes; // k-ary tree, inject nodes to break up large fan in/out
-        public int K; // K size of tree
-        public int MaxFanIn; // Inject tree when nodes have more parents than this 
-        public int MaxFanOut; // Inject tree when nodes have more children than this
-        public bool SeparateRootThread; // Isolate a thread on the root for less latency when starting work. 
-        public bool SeparateSinkThread; // Isolate a thread on the sink nodes for less latency when finishing work.
-        public bool ThreadAffinity; // Pin threads to cores for improved locality and latency
+    /// <summary>Total iterations (work units <c>0..Cycles - 1</c>) executed by each node.</summary>
+    public int Cycles;
 
-        //wip
-        //public WaitStrategy WaitStrategy; // How should Threads wait
-        //public bool TrashTaskWhenStalled; // if partition strategy allows diffrent threads to touch nodes this can decrease the likelyhood of progress degregation by throwing out tasks that cant be published(released) after a certain point
-        //public int SpinCountBeforeStall; // how long before trashing
-        
+    /// <summary>Maximum allowed downstream lag between a producer and its children.</summary>
+    public int Slack;
 
-    }
+    /// <summary>Desired worker thread count (clamped to available logical processors and node count).</summary>
+    public int Threads;
 
+    /// <summary>Static node-to-thread partitioning strategy.</summary>
+    public PartitionStrategy Strategy;
+
+    /// <summary>Enables automatic k-ary relay tree injection for high fan-in or fan-out nodes.</summary>
+    public bool InjectNodes;
+
+    /// <summary>Branching factor for injected k-ary relay trees (minimum 2 when enabled).</summary>
+    public int K;
+
+    /// <summary>Maximum allowed parent count per node before k-ary fan-in reduction (<c>&lt;= 0</c> for unlimited).</summary>
+    public int MaxFanIn;
+
+    /// <summary>Maximum allowed child count per node before k-ary fan-out reduction (<c>&lt;= 0</c> for unlimited).</summary>
+    public int MaxFanOut;
+
+    /// <summary>Isolates zero-in-degree root nodes on thread <c>0</c> to reduce startup latency.</summary>
+    public bool SeparateRootThread;
+
+    /// <summary>Isolates zero-out-degree sink nodes on the last worker thread to reduce completion latency.</summary>
+    public bool SeparateSinkThread;
+
+    /// <summary>Pins worker threads to logical CPU cores on Windows and Linux (with graceful fallback).</summary>
+    public bool ThreadAffinity;
 }
