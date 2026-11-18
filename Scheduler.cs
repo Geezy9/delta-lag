@@ -19,48 +19,26 @@ public class Scheduler
         public int[] ParentEdges;
         public int[] ParentOffsets;
         public Action<int>?[] Tasks;
+        public int Cycles;
+        public int Slack;
+        public int ThreadCount;
+        public int[][] ThreadSchedules;
+
+        public int MaxEdgeHops { get; set; }
     }
 
-    private int _doneThreads;
-    private int _barrierGeneration;
-
-    public void Run(WorkContext ctx, Config config)
+    public void Run(WorkContext ctx)
     {
-        int cycles = config.Cycles;
-        int slack = config.Slack;
-        int threads = config.Threads;
-        PartitionStrategy strategy = config.Strategy;
-        bool seperateRootThread = config.SeperateRootThread;
+        int cycles = ctx.Cycles;
+        int slack = ctx.Slack;
+        int threadCount = ctx.ThreadCount;
+        int[][] threadSchedules = ctx.ThreadSchedules;
         var nodeArray = ctx.NodeArray;
         var edges = ctx.Edges;
         var offsets = ctx.Offsets;
         var parentEdgesArray = ctx.ParentEdges;
         var parentOffsetsArray = ctx.ParentOffsets;
-        int nodeCount = nodeArray.Length;
         var tasks = ctx.Tasks;
-
-        bool trustUser = config.Threads > 0 && config.Threads <= Environment.ProcessorCount * 2;
-        int threadCount;
-        if (trustUser)
-        {
-            threadCount = Math.Min(config.Threads, Environment.ProcessorCount);
-        }
-        else
-        {
-            threadCount = Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
-        }
-
-        threadCount = Math.Min(threadCount, Math.Max(1, nodeCount));
-
-        int[][] threadSchedules = ThreadSchedules.Build(
-            nodeCount,
-            threadCount,
-            strategy,
-            edges,
-            offsets,
-            parentEdgesArray,
-            parentOffsetsArray,
-            seperateRootThread);
 
         Parallel.For(0, threadCount, t =>
         {
@@ -79,26 +57,15 @@ public class Scheduler
 
                     allDone = false;
 
+                    // CanFire gates on neighbors' WorkDone, while TryClaimWork CASes WorkClaimed;
+                    // this lets multiple threads poll the same node without double-executing a cycle,
+                    // and keeps dependents blocked until PublishWorkDone signals task completion.
                     long workSnap = Helpers.CanFire(i, slack, nodeArray, edges, offsets, parentEdgesArray, parentOffsetsArray);
                     if (workSnap != -1 && workSnap < cycles && nodeArray[i].TryClaimWork(workSnap))
                     {
                         tasks[i]?.Invoke((int)workSnap);
                         nodeArray[i].PublishWorkDone(workSnap + 1);
                     }
-                }
-            }
-
-            int gen = Volatile.Read(ref _barrierGeneration);
-            if (Interlocked.Increment(ref _doneThreads) == threadCount)
-            {
-                Volatile.Write(ref _doneThreads, 0);
-                Interlocked.Increment(ref _barrierGeneration); // advance generation to release waiters
-            }
-            else
-            {
-                while (Volatile.Read(ref _barrierGeneration) == gen)
-                {
-                    Thread.SpinWait(5);
                 }
             }
         });

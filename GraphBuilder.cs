@@ -75,6 +75,7 @@ public class GraphBuilder
                 Offsets = g.offsets.ToArray(),
                 ParentEdges = parentEdges.ToArray(),
                 ParentOffsets = parentOffsets.ToArray(),
+                MaxEdgeHops = 1,
             };
         }
 
@@ -87,6 +88,34 @@ public class GraphBuilder
         var taskArray = new Action<int>?[output.NodeArray.Length];
         tasks.CopyTo(taskArray);
         output.Tasks = taskArray;
+
+        int nodeCount = output.NodeArray.Length;
+        bool trustUser = con.Threads > 0 && con.Threads <= Environment.ProcessorCount * 2;
+        int threadCount;
+        if (trustUser)
+        {
+            threadCount = Math.Min(con.Threads, Environment.ProcessorCount);
+        }
+        else
+        {
+            threadCount = Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4));
+        }
+
+        threadCount = Math.Min(threadCount, Math.Max(1, nodeCount));
+
+        output.Cycles = con.Cycles;
+        output.Slack = con.Slack;
+        output.ThreadCount = threadCount;
+        output.ThreadSchedules = ThreadSchedules.Build(
+            nodeCount,
+            threadCount,
+            con.Strategy,
+            output.Edges,
+            output.Offsets,
+            output.ParentEdges,
+            output.ParentOffsets,
+            con.SeparateRootThread,
+            con.SeparateSinkThread);
 
         return output;
     }

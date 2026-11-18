@@ -15,7 +15,7 @@
 3. `builder.AddEdge(from, to)`
 4. `Config config = new() { ... }`
 5. `var ctx = builder.Build(config)`
-6. `new Scheduler().Run(ctx, config)`
+6. `new Scheduler().Run(ctx)`
 
 ## Key APIs
 
@@ -27,33 +27,31 @@
 
 ### Scheduler
 
-- `void Run(Scheduler.WorkContext ctx, Config config)`
+- `void Run(Scheduler.WorkContext ctx)`
 
 ### Scheduler.WorkContext (`ref struct`)
 
-- `Node[] NodeArray`
-- `int[] Edges`
-- `int[] Offsets`
-- `int[] ParentEdges`
-- `int[] ParentOffsets`
-- `Action<int>?[] Tasks`
+Compiled graph and execution context returned by `GraphBuilder.Build` and consumed by `Scheduler.Run`. All fields are `public`:
 
-### Node (`struct`, 128 bytes)
 
-- `long WorkClaimed { get; }`
-- `long WorkDone { get; set; }`
+- *Do not touch unless you know what you're doing. Manipulating these can cause undefined behavior.*
+
+- `Node[] NodeArray` — Per-node atomic counter array
+- `int[] Edges`, `int[] Offsets` — Forward CSR adjacency arrays
+- `int[] ParentEdges`, `int[] ParentOffsets` — Reverse CSR adjacency arrays
+- `Action<int>?[] Tasks` — Node task delegates indexed by node ID
+- `int Cycles` — Target work units per node
+- `int Slack` — Allowed downstream lag
+- `int ThreadCount` — Effective worker thread count
+- `int[][] ThreadSchedules` — Per-thread node schedules
+- `int MaxEdgeHops` — Maximum hop distance between any original producer and consumer after optional k-ary relay injection (`1` when no relay nodes are injected)
+
+### Node (`struct`, 128-byte cache-padded)
+
+- `long WorkClaimed`
+- `long WorkDone`
 - `bool TryClaimWork(long expected)`
 - `void PublishWorkDone(long newValue)`
-
-### Graph
-
-- `int NodeCount`
-- `List<int> edges`
-- `List<int> offsets`
-
-### KaryInjector
-
-- `static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)`
 
 ### Slot\<T\>
 
@@ -61,9 +59,10 @@
 
 ### Ring\<T\>
 
-- `T[] Buffers`
 - `Ring(int size)`
 - `static Ring<T> FromCon(Config con)`
+- `static Ring<T> FromCon(Config con, int maxHops)`
+- `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config con)`
 - `T Read(long workUnit)`
 - `void Write(long workUnit, T payload)`
 
@@ -73,7 +72,8 @@
 - `Slack`
 - `Threads`
 - `Strategy`
-- `SeperateRootThread`
+- `SeparateRootThread`
+- `SeparateSinkThread`
 - `InjectNodes`
 - `K`
 - `MaxFanIn`
@@ -89,4 +89,4 @@
 
 ## Full spec
 
-See [api-spec.md](api-spec.md).
+See [api-spec.md](api-spec.md) and the [Pro User Guide](extending.md) for extending `delta-lag` externally.

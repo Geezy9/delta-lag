@@ -12,37 +12,49 @@ public sealed class Slot<T>
 }
 
 /// <summary>
-/// SPSC Typed, non-boxing RingBuffer, data is passed between nodes though methods on the Ring
+/// SPSC Typed, non-boxing RingBuffer, data is passed between nodes through methods on the Ring
 /// Use Per Edge
 /// Default for slack > 0;
 /// </summary>
 /// <typeparam name="T"></typeparam>
 public sealed class Ring<T>
 {
-    public T Type;
-    public T[] Buffers;
-    private int mask;
+    internal readonly T[] Buffers;
+    private readonly int mask;
 
 
 
     public Ring(int size)
     {
-        if ((size & (size - 1)) != 0)
+        if (size <= 0 || (size & (size - 1)) != 0)
             throw new ArgumentException(
-                "Size must be a power of two");
+                "Size must be a positive power of two.", nameof(size));
 
         Buffers = new T[size];
         mask = size - 1;
     }
 
     public static Ring<T> FromCon(Config con)
-    {
-        int size = checked((int)(con.Slack + 1));
+        => FromCon(con, maxHops: 1);
 
-        size = (int)BitOperations.RoundUpToPowerOf2((nuint)size);
+    public static Ring<T> FromCon(Config con, int maxHops)
+    {
+        if (con is null)
+            throw new ArgumentNullException(nameof(con));
+        if (con.Slack < 0)
+            throw new ArgumentOutOfRangeException(nameof(con.Slack), "Slack cannot be negative.");
+        if (maxHops < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxHops), "maxHops must be at least 1.");
+
+        int size = checked(maxHops * (con.Slack + 1));
+
+        size = checked((int)BitOperations.RoundUpToPowerOf2((nuint)size));
 
         return new Ring<T>(size);
     }
+
+    public static Ring<T> FromContext(Scheduler.WorkContext ctx, Config con)
+        => FromCon(con, Math.Max(1, ctx.MaxEdgeHops));
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
