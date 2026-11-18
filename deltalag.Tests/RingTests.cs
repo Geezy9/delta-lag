@@ -19,12 +19,15 @@ public class RingTests
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-4)]
     [InlineData(3)]
     [InlineData(5)]
     [InlineData(6)]
     [InlineData(7)]
     [InlineData(10)]
-    public void Constructor_WithNonPowerOfTwo_ThrowsArgumentException(int size)
+    public void Constructor_WithInvalidSize_ThrowsArgumentException(int size)
     {
         Assert.Throws<ArgumentException>(() => new Ring<int>(size));
     }
@@ -118,11 +121,148 @@ public class RingTests
 
         var ctx = builder.Build(config);
         var scheduler = new Scheduler();
-        scheduler.Run(ctx, config);
+        scheduler.Run(ctx);
 
         for (int i = 0; i < config.Cycles; i++)
         {
             Assert.Equal(i * 10L + 1, received[i]);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, 2, 2)]
+    [InlineData(1, 3, 8)]
+    [InlineData(3, 2, 8)]
+    [InlineData(4, 2, 16)]
+    public void FromCon_WithMaxHops_SizesForMultiHopInFlightWindow(int slack, int maxHops, int expectedSize)
+    {
+        var config = new Config { Slack = slack };
+
+        var ring = Ring<int>.FromCon(config, maxHops);
+
+        Assert.Equal(expectedSize, ring.Buffers.Length);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public void Ring_WithInjectNodesAndSlack_PassesAllPayloadsCorrectly(int slack)
+    {
+        var config = new Config
+        {
+            Cycles = 200,
+            Slack = slack,
+            Threads = 4,
+            Strategy = PartitionStrategy.Stride,
+            InjectNodes = true,
+            K = 2,
+            MaxFanIn = 2,
+            MaxFanOut = 2
+        };
+
+        const int branchCount = 5;
+        var fanOutRings = new Ring<long>[branchCount];
+        var fanInRings = new Ring<long>[branchCount];
+        var branchReceived = new long[branchCount][];
+        var sinkReceived = new long[config.Cycles];
+
+        var builder = new GraphBuilder();
+        int producer = builder.AddNode(workUnit =>
+        {
+            for (int b = 0; b < branchCount; b++)
+            {
+                fanOutRings[b].Write(workUnit, workUnit * 100L + b);
+            }
+        });
+
+        var middles = new int[branchCount];
+        for (int b = 0; b < branchCount; b++)
+        {
+            int branch = b;
+            branchReceived[branch] = new long[config.Cycles];
+            middles[branch] = builder.AddNode(workUnit =>
+            {
+                long val = fanOutRings[branch].Read(workUnit);
+                branchReceived[branch][workUnit] = val;
+                fanInRings[branch].Write(workUnit, val + 1000L);
+            });
+            builder.AddEdge(producer, middles[branch]);
+        }
+
+        int sink = builder.AddNode(workUnit =>
+        {
+            long sum = 0;
+            for (int b = 0; b < branchCount; b++)
+            {
+                sum += fanInRings[b].Read(workUnit);
+            }
+            sinkReceived[workUnit] = sum;
+        });
+
+        for (int b = 0; b < branchCount; b++)
+        {
+            builder.AddEdge(middles[b], sink);
+        }
+
+        var ctx = builder.Build(config);
+        Assert.True(ctx.MaxEdgeHops >= 2);
+
+        for (int b = 0; b < branchCount; b++)
+        {
+            fanOutRings[b] = Ring<long>.FromContext(ctx, config);
+            fanInRings[b] = Ring<long>.FromContext(ctx, config);
+        }
+
+        var scheduler = new Scheduler();
+        scheduler.Run(ctx);
+
+        for (int w = 0; w < config.Cycles; w++)
+        {
+            long expectedSum = 0;
+            for (int b = 0; b < branchCount; b++)
+            {
+                long expectedVal = w * 100L + b;
+                Assert.Equal(expectedVal, branchReceived[b][w]);
+                expectedSum += expectedVal + 1000L;
+            }
+            Assert.Equal(expectedSum, sinkReceived[w]);
+        }
+    }
+
+    [Theory]
+    [InlineData(PartitionStrategy.ChunkedLinear)]
+    [InlineData(PartitionStrategy.Stride)]
+    [InlineData(PartitionStrategy.Clustered)]
+    [InlineData(PartitionStrategy.Leveled)]
+    [InlineData(PartitionStrategy.DepthFirst)]
+    public void Ring_WithAllPartitionStrategiesAndSlack_PassesAllPayloadsCorrectly(PartitionStrategy strategy)
+    {
+        var config = new Config
+        {
+            Cycles = 64,
+            Slack = 3,
+            Threads = 3,
+            Strategy = strategy,
+            InjectNodes = false
+        };
+
+        var r0 = Ring<long>.FromCon(config);
+        var r1 = Ring<long>.FromCon(config);
+        var received = new long[config.Cycles];
+
+        var builder = new GraphBuilder();
+        int n0 = builder.AddNode(w => r0.Write(w, w * 7L));
+        int n1 = builder.AddNode(w => r1.Write(w, r0.Read(w) + 3L));
+        int n2 = builder.AddNode(w => received[w] = r1.Read(w) * 2L);
+        builder.AddEdge(n0, n1);
+        builder.AddEdge(n1, n2);
+
+        var ctx = builder.Build(config);
+        new Scheduler().Run(ctx);
+
+        for (int w = 0; w < config.Cycles; w++)
+        {
+            Assert.Equal((w * 7L + 3L) * 2L, received[w]);
         }
     }
 }

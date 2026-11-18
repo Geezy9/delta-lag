@@ -10,25 +10,78 @@ internal static class ThreadSchedules
         int[] offsets,
         int[] parentEdges,
         int[] parentOffsets,
-        bool seperateRootThread)
+        bool separateRootThread,
+        bool separateSinkThread)
     {
+        int reserved = (separateRootThread ? 1 : 0) + (separateSinkThread ? 1 : 0);
+        if (reserved > 0 && threadCount - reserved < 1)
+        {
+            throw new InvalidOperationException(
+                $"Thread count ({threadCount}) is insufficient for the requested dedicated threads ({reserved}); at least 1 general worker thread is required.");
+        }
+
         if (threadCount <= 1)
             return new[] { Enumerable.Range(0, nodeCount).ToArray() };
 
-        int[][] schedules = strategy switch
+        int[][] schedules = new int[threadCount][];
+        var isDedicated = new bool[nodeCount];
+
+        if (separateRootThread)
         {
-            PartitionStrategy.ChunkedLinear => BuildChunkedSchedule(Enumerable.Range(0, nodeCount).ToArray(), threadCount),
-            PartitionStrategy.Stride => BuildStrideSchedule(Enumerable.Range(0, nodeCount).ToArray(), threadCount),
-            PartitionStrategy.Clustered => BuildChunkedSchedule(BuildClusteredOrder(nodeCount, edges, offsets, parentEdges, parentOffsets), threadCount),
-            PartitionStrategy.Leveled => BuildLeveledSchedule(nodeCount, edges, offsets, parentOffsets, threadCount, seperateRootThread),
-            PartitionStrategy.DepthFirst => BuildChunkedSchedule(BuildDepthFirstOrder(nodeCount, edges, offsets, parentOffsets), threadCount),
-            _ => BuildStrideSchedule(Enumerable.Range(0, nodeCount).ToArray(), threadCount),
+            var roots = new List<int>();
+            for (int node = 0; node < nodeCount; node++)
+            {
+                if (parentOffsets[node + 1] - parentOffsets[node] == 0)
+                {
+                    roots.Add(node);
+                    isDedicated[node] = true;
+                }
+            }
+            schedules[0] = roots.ToArray();
+        }
+
+        if (separateSinkThread)
+        {
+            var sinks = new List<int>();
+            for (int node = 0; node < nodeCount; node++)
+            {
+                if (!isDedicated[node] && offsets[node + 1] - offsets[node] == 0)
+                {
+                    sinks.Add(node);
+                    isDedicated[node] = true;
+                }
+            }
+            schedules[threadCount - 1] = sinks.ToArray();
+        }
+
+        int workerStart = separateRootThread ? 1 : 0;
+        int workerCount = threadCount - reserved;
+
+        int[][] workerSchedules = strategy switch
+        {
+            PartitionStrategy.ChunkedLinear => BuildChunkedSchedule(FilterOrder(Enumerable.Range(0, nodeCount), isDedicated), workerCount),
+            PartitionStrategy.Stride => BuildStrideSchedule(FilterOrder(Enumerable.Range(0, nodeCount), isDedicated), workerCount),
+            PartitionStrategy.Clustered => BuildChunkedSchedule(FilterOrder(BuildClusteredOrder(nodeCount, edges, offsets, parentEdges, parentOffsets), isDedicated), workerCount),
+            PartitionStrategy.Leveled => BuildLeveledSchedule(nodeCount, edges, offsets, parentOffsets, workerCount, isDedicated),
+            PartitionStrategy.DepthFirst => BuildChunkedSchedule(FilterOrder(BuildDepthFirstOrder(nodeCount, edges, offsets, parentOffsets), isDedicated), workerCount),
+            _ => BuildStrideSchedule(FilterOrder(Enumerable.Range(0, nodeCount), isDedicated), workerCount),
         };
 
-        if (seperateRootThread && strategy != PartitionStrategy.Leveled)
-            ApplySeperateRootThread(schedules, parentOffsets);
+        for (int w = 0; w < workerCount; w++)
+            schedules[workerStart + w] = workerSchedules[w];
 
         return schedules;
+    }
+
+    private static int[] FilterOrder(IEnumerable<int> order, bool[] isDedicated)
+    {
+        var result = new List<int>();
+        foreach (int node in order)
+        {
+            if (!isDedicated[node])
+                result.Add(node);
+        }
+        return result.ToArray();
     }
 
     private static int[][] BuildChunkedSchedule(int[] order, int threadCount)
@@ -71,6 +124,10 @@ internal static class ThreadSchedules
         return schedules;
     }
 
+    /// <summary>
+    /// Orders nodes via undirected BFS (following both outgoing and incoming edges) so connected
+    /// components stay contiguous when chunked across threads, improving cache locality on shared edges.
+    /// </summary>
     private static int[] BuildClusteredOrder(int nodeCount, int[] edges, int[] offsets, int[] parentEdges, int[] parentOffsets)
     {
         var order = new List<int>(nodeCount);
@@ -115,13 +172,17 @@ internal static class ThreadSchedules
         return order.ToArray();
     }
 
+    /// <summary>
+    /// Groups nodes by topological depth (Kahn's algorithm) and stripes levels across threads
+    /// so each thread tends to own a slice of the pipeline wave.
+    /// </summary>
     private static int[][] BuildLeveledSchedule(
         int nodeCount,
         int[] edges,
         int[] offsets,
         int[] parentOffsets,
         int threadCount,
-        bool seperateRootThread)
+        bool[] isDedicated)
     {
         int[] inDegree = new int[nodeCount];
         for (int i = 0; i < nodeCount; i++)
@@ -147,7 +208,8 @@ internal static class ThreadSchedules
                     continue;
 
                 seen[node] = true;
-                levelNodes.Add(node);
+                if (!isDedicated[node])
+                    levelNodes.Add(node);
 
                 for (int ei = offsets[node]; ei < offsets[node + 1]; ei++)
                 {
@@ -161,12 +223,15 @@ internal static class ThreadSchedules
                 levels.Add(levelNodes);
         }
 
+        // Defensive fallback: if a caller bypasses cycle validation, ensure unreached nodes
+        // are still scheduled rather than silently dropped.
         for (int i = 0; i < nodeCount; i++)
         {
             if (seen[i])
                 continue;
 
-            levels.Add(new List<int> { i });
+            if (!isDedicated[i])
+                levels.Add(new List<int> { i });
         }
 
         var buckets = new List<int>[threadCount];
@@ -175,23 +240,7 @@ internal static class ThreadSchedules
 
         for (int levelIndex = 0; levelIndex < levels.Count; levelIndex++)
         {
-            int targetThread;
-            if (seperateRootThread && threadCount > 1)
-            {
-                if (levelIndex == 0)
-                {
-                    targetThread = 0;
-                }
-                else
-                {
-                    targetThread = 1 + ((levelIndex - 1) % (threadCount - 1));
-                }
-            }
-            else
-            {
-                targetThread = levelIndex % threadCount;
-            }
-
+            int targetThread = levelIndex % threadCount;
             buckets[targetThread].AddRange(levels[levelIndex]);
         }
 
@@ -202,48 +251,10 @@ internal static class ThreadSchedules
         return schedules;
     }
 
-    private static void ApplySeperateRootThread(int[][] schedules, int[] parentOffsets)
-    {
-        if (schedules.Length <= 1)
-            return;
-
-        var rootSet = new HashSet<int>();
-        for (int node = 0; node < parentOffsets.Length - 1; node++)
-        {
-            if (parentOffsets[node + 1] - parentOffsets[node] == 0)
-                rootSet.Add(node);
-        }
-
-        if (rootSet.Count == 0)
-            return;
-
-        var rootThreadNodes = new List<int>(schedules[0].Length + rootSet.Count);
-        for (int i = 0; i < schedules[0].Length; i++)
-            rootThreadNodes.Add(schedules[0][i]);
-
-        for (int t = 0; t < schedules.Length; t++)
-        {
-            var next = new List<int>(schedules[t].Length);
-            for (int i = 0; i < schedules[t].Length; i++)
-            {
-                int node = schedules[t][i];
-                if (!rootSet.Contains(node))
-                {
-                    next.Add(node);
-                    continue;
-                }
-
-                if (t != 0)
-                    rootThreadNodes.Add(node);
-            }
-
-            if (t != 0)
-                schedules[t] = next.ToArray();
-        }
-
-        schedules[0] = rootThreadNodes.ToArray();
-    }
-
+    /// <summary>
+    /// Produces a pre-order DFS traversal seeded from zero-in-degree roots so parent-to-child
+    /// chains land on the same thread when chunked.
+    /// </summary>
     private static int[] BuildDepthFirstOrder(int nodeCount, int[] edges, int[] offsets, int[] parentOffsets)
     {
         var visited = new bool[nodeCount];
@@ -265,6 +276,7 @@ internal static class ThreadSchedules
                 visited[node] = true;
                 order.Add(node);
 
+                // Push in reverse CSR order so the first child is popped first.
                 for (int ei = offsets[node + 1] - 1; ei >= offsets[node]; ei--)
                 {
                     int child = edges[ei];
@@ -274,6 +286,7 @@ internal static class ThreadSchedules
             }
         }
 
+        // Cover any remaining nodes not reachable from a root (e.g. if cycles were present).
         for (int i = 0; i < nodeCount; i++)
         {
             if (visited[i])

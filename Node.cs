@@ -8,21 +8,17 @@ namespace deltalag;
 [StructLayout(LayoutKind.Explicit, Size = 128)]
 public struct Node
 {
-    
+
     [FieldOffset(0)]
     private long _workDone;
 
     [FieldOffset(64)]
     private long _workClaimed;
-     
+
 
     public long WorkClaimed => Volatile.Read(ref _workClaimed);
 
-    public long WorkDone
-    {
-        get => Volatile.Read(ref _workDone);
-        set => Interlocked.Exchange(ref _workDone, value);
-    }
+    public long WorkDone => Volatile.Read(ref _workDone);
 
     public bool TryClaimWork(long expected) =>
         Interlocked.CompareExchange(ref _workClaimed, expected + 1, expected) == expected;

@@ -1,8 +1,14 @@
 ﻿namespace deltalag;
 
-public static class KaryInjector
+/// <summary>
+/// Rewrites high-degree vertices into balanced k-ary trees of no-op relay nodes so that
+/// <see cref="Helpers.CanFire"/> never has to scan unbounded parent/child lists on every poll.
+/// Original node IDs [0..originalNodeCount) are preserved in place; relays are appended after
+/// them so <see cref="GraphBuilder"/> can map tasks by index without a translation table.
+/// </summary>
+internal static class KaryInjector
 {
-    public static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)
+    internal static Scheduler.WorkContext InjectKaryTree(Graph graph, Config con)
     {
         if (graph is null)
             throw new ArgumentNullException(nameof(graph), "Graph cannot be null.");
@@ -17,11 +23,14 @@ public static class KaryInjector
                 Offsets = new[] { 0 },
                 ParentEdges = Array.Empty<int>(),
                 ParentOffsets = new[] { 0 },
+                MaxEdgeHops = 1,
             };
 
         int k = Math.Max(2, con.K);
-        int fanOutLimit = NormalizeLimit(con.MaxFanOut);
-        int fanInLimit = NormalizeLimit(con.MaxFanIn);
+        int fanOutLimit = NormalizeLimit(con.MaxFanOut, nameof(con.MaxFanOut));
+        int fanInLimit = NormalizeLimit(con.MaxFanIn, nameof(con.MaxFanIn));
+        // Clamp branching factor to the degree limit so newly injected relays also obey the cap
+        // (each relay has 1 edge on its root side and <= branchFactor edges on its leaf side).
         int fanOutBranch = Math.Min(k, fanOutLimit);
         int fanInBranch = Math.Min(k, fanInLimit);
 
@@ -36,16 +45,21 @@ public static class KaryInjector
                 Offsets = sourceGraph.offsets.ToArray(),
                 ParentEdges = sourceParentEdges.ToArray(),
                 ParentOffsets = sourceParentOffsets.ToArray(),
+                MaxEdgeHops = 1,
             };
         }
 
         var adjacency = BuildAdjacency(sourceGraph);
 
+        // Pass order matters: ReduceFanOut adds relays with in-degree 1 without changing any
+        // child's in-degree, and ReduceFanIn adds relays with out-degree 1 without increasing
+        // any parent's out-degree, so neither pass invalidates the other's degree bound.
         ReduceFanOut(adjacency, originalNodeCount, fanOutLimit, fanOutBranch);
         ReduceFanIn(adjacency, fanInLimit, fanInBranch);
 
         Graph optimized = BuildGraph(adjacency);
         Helpers.BuildReverseCSR(optimized, out var parentEdges, out var parentOffsets);
+        int maxEdgeHops = ComputeMaxEdgeHops(optimized, originalNodeCount);
 
         return new Scheduler.WorkContext
         {
@@ -54,10 +68,17 @@ public static class KaryInjector
             Offsets = optimized.offsets.ToArray(),
             ParentEdges = parentEdges.ToArray(),
             ParentOffsets = parentOffsets.ToArray(),
+            MaxEdgeHops = maxEdgeHops,
         };
     }
 
-    private static int NormalizeLimit(int configuredLimit) => configuredLimit <= 0 ? int.MaxValue : configuredLimit;
+    private static int NormalizeLimit(int configuredLimit, string paramName)
+    {
+        if (configuredLimit == 1)
+            throw new ArgumentOutOfRangeException(paramName, "Degree limit must be >= 2 (or <= 0 for unlimited).");
+
+        return configuredLimit <= 0 ? int.MaxValue : configuredLimit;
+    }
 
     private static bool RequiresInjection(Graph graph, int fanOutLimit, int fanInLimit)
     {
@@ -130,6 +151,8 @@ public static class KaryInjector
             var level = new List<int>(children);
             children.Clear();
 
+            // Build the tree bottom-up, collapsing groups of branchFactor until the root's
+            // direct children fit within branchFactor (which is <= fanOutLimit).
             while (level.Count > branchFactor)
             {
                 var nextLevel = new List<int>((level.Count + branchFactor - 1) / branchFactor);
@@ -139,6 +162,7 @@ public static class KaryInjector
                     int count = Math.Min(branchFactor, level.Count - i);
                     if (count == 1)
                     {
+                        // Avoid creating a 1-to-1 passthrough relay for a lone remainder.
                         nextLevel.Add(level[i]);
                         continue;
                     }
@@ -166,6 +190,8 @@ public static class KaryInjector
         if (fanInLimit == int.MaxValue)
             return;
 
+        // Snapshot inbound parents before injecting relays; newly added fan-in relays have
+        // in-degree <= branchFactor <= fanInLimit, so only pre-existing nodes need reduction.
         List<List<int>> parents = BuildParents(adjacency);
 
         for (int target = 0; target < parents.Count; target++)
@@ -174,6 +200,8 @@ public static class KaryInjector
             if (inboundParents.Count <= fanInLimit)
                 continue;
 
+            // Detach direct edges first (one per inboundParents entry to preserve multiplicity)
+            // before wiring the bottom-up reduction tree into target.
             for (int i = 0; i < inboundParents.Count; i++)
                 RemoveEdge(adjacency[inboundParents[i]], target);
 
@@ -188,6 +216,7 @@ public static class KaryInjector
                     int count = Math.Min(branchFactor, level.Count - i);
                     if (count == 1)
                     {
+                        // Promote lone remainder directly rather than inserting a 1-to-1 relay.
                         nextLevel.Add(level[i]);
                         continue;
                     }
@@ -262,5 +291,57 @@ public static class KaryInjector
         }
 
         return graph;
+    }
+
+    /// <summary>
+    /// Computes the longest hop count between any two original nodes across injected relay chains.
+    /// Every relay node adds 1 hop of pipeline lag before WorkDone propagates to the original child.
+    /// </summary>
+    private static int ComputeMaxEdgeHops(Graph graph, int originalNodeCount)
+    {
+        int totalNodes = graph.NodeCount;
+        int injectedCount = totalNodes - originalNodeCount;
+        if (injectedCount <= 0)
+            return 1;
+
+        // Every injected node has >= 1 outgoing path to an original node, so its relay depth
+        // is always >= 1; 0 is therefore a safe sentinel for unvisited.
+        var memo = new int[injectedCount];
+
+        int GetRelayDepth(int node)
+        {
+            if (node < originalNodeCount)
+                return 0;
+
+            int idx = node - originalNodeCount;
+            if (memo[idx] != 0)
+                return memo[idx];
+
+            int maxChildDepth = 0;
+            for (int ei = graph.offsets[node]; ei < graph.offsets[node + 1]; ei++)
+            {
+                int child = graph.edges[ei];
+                int d = 1 + GetRelayDepth(child);
+                if (d > maxChildDepth)
+                    maxChildDepth = d;
+            }
+
+            memo[idx] = maxChildDepth;
+            return maxChildDepth;
+        }
+
+        int maxHops = 1;
+        for (int u = 0; u < originalNodeCount; u++)
+        {
+            for (int ei = graph.offsets[u]; ei < graph.offsets[u + 1]; ei++)
+            {
+                int child = graph.edges[ei];
+                int hops = 1 + GetRelayDepth(child);
+                if (hops > maxHops)
+                    maxHops = hops;
+            }
+        }
+
+        return maxHops;
     }
 }

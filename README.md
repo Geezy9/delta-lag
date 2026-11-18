@@ -1,14 +1,36 @@
 # delta-lag
 
-Lock-free, deterministic DAG scheduler for C#.
+**A lock-free, deterministic DAG scheduler for .NET that replaces task queues and work stealing with pure arithmetic.**
 
-Status: Experimental. APIs may change.
+Most parallel schedulers spend a surprising amount of time coordinating work: pushing to concurrent queues, stealing tasks across threads, and allocating closures on the heap. `delta-lag` takes a different approach. It compiles your dependency graph into flat, cache-contiguous arrays, assigns nodes statically to threads, and coordinates execution using a single rule: **a node only runs when its parents are ahead of it and its children aren't too far behind.**
 
-## Requirements
+No global queues. No locks. No work stealing. No allocations in the hot loop.
 
-- .NET 10+
+> **Status:** Experimental (`v1.1.0`). APIs may change. Requires **.NET 10+**.
 
-## Quick start
+---
+
+## The Core Idea
+
+In a cyclic or tick-based DAG—such as a simulation loop, DSP graph, or multi-stage data pipeline—every node executes for `Cycles` iterations. Instead of scheduling individual tasks dynamically, `delta-lag` tracks progress per node with atomic counters and enforces two distance constraints:
+
+1. **Upstream readiness:** All parents must have completed at least `w + 1` before a node can run work unit `w`.
+2. **Bounded backpressure (`Slack`):** All children must have completed at least `w - Slack` before a node can run work unit `w`.
+
+When `Slack = 0`, the graph runs in strict lock-step. When `Slack > 0`, upstream nodes can run ahead of downstream nodes by up to `Slack` iterations, turning your DAG into a bounded, lock-free pipeline without a single mutex or channel.
+
+## Built for Mechanical Sympathy
+
+Every piece of `delta-lag` is designed to stay out of the CPU's way:
+
+- **Zero false sharing by layout:** Each `Node` is explicitly sized to 128 bytes—two 64-byte cache lines—separating `_workDone` (offset `0`) from `_workClaimed` (offset `64`). Reads and compare-and-swap claims never contend on the same cache line, nor spill into adjacent nodes.
+- **Flat CSR graph representation:** Forward and reverse edges are stored in Compressed Sparse Row (`int[]`) arrays. Checking eligibility (`CanFire`) is a tight, contiguous scan with zero pointer chasing.
+- **Static thread schedules:** Nodes are partitioned across threads once before execution using a chosen `PartitionStrategy`, eliminating runtime queue contention.
+- **Zero-allocation edge buffers:** `Ring<T>` provides a non-boxing, power-of-two SPSC ring buffer indexed directly by `workUnit & mask`, sized automatically via `Ring<T>.FromContext(ctx, config)`.
+
+---
+
+## Quick Start
 
 ```bash
 git clone https://github.com/Geezy9/delta-lag.git
@@ -17,76 +39,102 @@ dotnet build
 dotnet test
 ```
 
-## Why
+## Example: Pipelined 3-Stage Graph
 
-delta-lag is built for predictable parallel DAG execution with minimal coordination overhead:
-
-- No global queues
-- No work stealing
-- Lock-free progression with atomics
-
-Each node tracks its own claimed and completed work. Eligibility is enforced by parent/child distance constraints.
-
-## Important note about `Slack`
-
-If `Slack > 0`, producers may run ahead of consumers by up to `Slack` work units.
-
-- `Slot<T>` is a single unbuffered value and should only be used with `Slack = 0`.
-- `Ring<T>` is a typed, non-boxing SPSC ring buffer intended for per-edge data passing when `Slack > 0` (use `Ring<T>.FromCon(config)` to size it to `Slack + 1` rounded up to a power of two).
-
-## Example
+Here is a diamond-free pipeline where `ingest` feeds `transform`, which feeds `sink`, running 64 cycles across 2 threads with `Slack = 4` (allowing up to 4 work units in flight per edge):
 
 ```csharp
 using deltalag;
 
 var config = new Config
 {
-    Cycles = 32,
-    Slack = 4,
-    Threads = 2,
-    Strategy = PartitionStrategy.Stride,
-    InjectNodes = false,
+    Cycles = 64,                       // Each node executes 64 iterations (workUnit 0..63)
+    Slack = 4,                         // Producers can run up to 4 cycles ahead of consumers
+    Threads = 2,                       // Static worker thread count
+    Strategy = PartitionStrategy.Stride, // Round-robin node assignment across threads
 };
 
-var ring = Ring<int>.FromCon(config);
+// Declare one typed, non-boxing ring buffer per edge (allocated after Build)
+Ring<int> rawToTransform = null!;
+Ring<int> transformToSink = null!;
 
 var builder = new GraphBuilder();
 
-int producer = builder.AddNode(workUnit =>
+// Nodes receive the current cycle index (workUnit) and run when
+// all parents are ahead (parent.WorkDone >= workUnit + 1)
+// and all children are within Slack (child.WorkDone >= workUnit - Slack).
+int ingest = builder.AddNode(workUnit =>
 {
-    ring.Write(workUnit, workUnit * 10);
+    rawToTransform.Write(workUnit, workUnit * 10);
 });
 
-int consumer = builder.AddNode(workUnit =>
+int transform = builder.AddNode(workUnit =>
 {
-    int value = ring.Read(workUnit);
-    Console.WriteLine($"Consumed {value} at work unit {workUnit}");
+    int input = rawToTransform.Read(workUnit);
+    transformToSink.Write(workUnit, input + 1);
 });
 
-builder.AddEdge(producer, consumer);
+int sink = builder.AddNode(workUnit =>
+{
+    int result = transformToSink.Read(workUnit);
+    Console.WriteLine($"Cycle {workUnit}: {result}");
+});
 
+// Wire directed dependencies: ingest -> transform -> sink
+builder.AddEdge(ingest, transform);
+builder.AddEdge(transform, sink);
+
+// Validate acyclicity and compile the graph into flat CSR arrays
 var ctx = builder.Build(config);
 
+// FromContext sizes each ring from ctx.MaxEdgeHops * (Slack + 1) rounded up to a power of two
+// so an ahead-running producer never overwrites an unread cycle (even with InjectNodes = true).
+rawToTransform = Ring<int>.FromContext(ctx, config);
+transformToSink = Ring<int>.FromContext(ctx, config);
+
+// Partition nodes across threads and run until all nodes complete 64 cycles
 var scheduler = new Scheduler();
-scheduler.Run(ctx, config);
+scheduler.Run(ctx);
 ```
 
-## Partition strategies
+---
 
-`PartitionStrategy` controls node-to-thread assignment:
+## Passing Data Between Nodes
 
-- `Stride`
-- `ChunkedLinear`
-- `Clustered`
-- `Leveled`
-- `DepthFirst`
+Because nodes can run ahead of their dependents when `Slack > 0`, choose the edge buffer that matches your `Slack` setting:
 
-All strategies preserve correctness and deterministic outcomes.
+- **`Ring<T>`** — A typed, non-boxing SPSC ring buffer for per-edge communication when `Slack > 0` or `InjectNodes = true`. **Prefer `Ring<T>.FromContext(ctx, config)`**: it reads `ctx.MaxEdgeHops` from the built graph and sizes the buffer to `ctx.MaxEdgeHops * (Slack + 1)` (rounded up to a power of two), preventing producers from overwriting unread slots. Avoid `Ring<T>.FromCon(config)` unless you know your graph is strictly single-hop—it hardcodes `maxHops = 1` (`Slack + 1`), so if `InjectNodes = true` adds relay hops (or `Slack` is enforced per hop across a multi-hop path), producers can run `MaxEdgeHops * (Slack + 1)` cycles ahead and silently overwrite unread data.
+- **`Slot<T>`** — A single unbuffered value wrapper. Only safe when `Slack = 0` and `MaxEdgeHops == 1` (strict single-hop lock-step).
+
+---
+
+## Tuning Execution
+
+### Partition Strategies
+
+`PartitionStrategy` controls how graph nodes are mapped to worker threads. All strategies preserve determinism and dependency correctness; choosing the right one lets you trade off cache locality against load balance:
+
+| Strategy | Best For |
+| --- | --- |
+| `Stride` | Evenly distributing heterogeneous workloads across threads |
+| `ChunkedLinear` | Contiguous node ranges with minimal scheduling overhead |
+| `Clustered` | Keeping connected subgraphs on the same thread for cache locality |
+| `Leveled` | Grouping nodes by topological depth |
+| `DepthFirst` | Following long dependency chains on a single thread |
+
+Set `SeparateRootThread = true` in `Config` to isolate root nodes on their own thread and reduce startup latency for downstream stages, and `SeparateSinkThread = true` to isolate sink nodes (out-degree `0`) on their own thread (requires at least one remaining general worker thread).
+
+### Automatic Fan-In / Fan-Out Smoothing
+
+Wide fan-in or fan-out nodes can become a bottleneck during dependency checks. Setting `InjectNodes = true` in `Config` enables `KaryInjector`, which automatically rewrites high-degree edges into balanced *k*-ary relay trees (controlled by `K`, `MaxFanIn`, and `MaxFanOut`) during `GraphBuilder.Build(config)`.
+
+---
 
 ## Documentation
 
-- [API spec](docs/api-spec.md)
-- [API quick reference](docs/api.md)
+- [API Specification](docs/api-spec.md)
+- [API Quick Reference](docs/api.md)
+- [Power User Guide: Extending delta-lag](docs/extending.md)
 
 ## License
 

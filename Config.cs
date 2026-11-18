@@ -14,8 +14,9 @@ namespace deltalag
         public int K; // K size of tree
         public int MaxFanIn; // Inject tree when nodes have more parents than this 
         public int MaxFanOut; // Inject tree when nodes have more children than this
-        public bool SeperateRootThread; // Isolate a thread on the root for less latency when starting work. 
-       
+        public bool SeparateRootThread; // Isolate a thread on the root for less latency when starting work. 
+        public bool SeparateSinkThread; // Isolate a thread on the sink nodes for less latency when finishing work.
+
         //wip
         //public bool ThreadAffinity; // Pin threads to cores for improved locality and latency;
         //public WaitStrategy WaitStrategy; // How should Threads wait
