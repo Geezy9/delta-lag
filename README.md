@@ -1,4 +1,5 @@
-# delta-lag
+# delta-lag 
+[![Watch a one-minute video tour of delta-lag](https://gitdiagram.com/video-badge.svg)](https://gitdiagram.com/geezy9/delta-lag/video)
 
 **A lock-free, deterministic DAG scheduler for .NET that replaces task queues and work stealing with pure arithmetic.**
 
@@ -141,7 +142,6 @@ Set `ThreadAffinity = true` in `Config` to pin worker `t` to logical core `t % E
 - [API Specification](docs/api-spec.md)
 - [API Quick Reference](docs/api.md)
 - [Power User Guide: Extending delta-lag](docs/extending.md)
-
 ## License
 
 MIT
