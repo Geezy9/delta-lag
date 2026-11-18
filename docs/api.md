@@ -15,7 +15,8 @@
 3. `builder.AddEdge(from, to)`
 4. `Config config = new() { ... }`
 5. `var ctx = builder.Build(config)`
-6. `new Scheduler().Run(ctx)`
+6. `using var scheduler = new Scheduler();`
+7. `scheduler.Run(ctx);`
 
 ## Key APIs
 
@@ -23,11 +24,12 @@
 
 - `int AddNode(Action<int>? task = null)`
 - `void AddEdge(int from, int to)`
-- `Scheduler.WorkContext Build(Config con)`
+- `Scheduler.WorkContext Build(Config config)`
 
-### Scheduler
+### Scheduler (`IDisposable`)
 
-- `void Run(Scheduler.WorkContext ctx)`
+- `void Run(Scheduler.WorkContext ctx)` — Executes using a persistent, reusable worker thread pool
+- `void Dispose()` — Stops and joins worker threads and releases wait handles
 
 ### Scheduler.WorkContext (`ref struct`)
 
@@ -44,6 +46,7 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 - `int Slack` — Allowed downstream lag
 - `int ThreadCount` — Effective worker thread count
 - `int[][] ThreadSchedules` — Per-thread node schedules
+- `bool ThreadAffinity` — Whether worker threads are pinned to logical cores
 - `int MaxEdgeHops` — Maximum hop distance between any original producer and consumer after optional k-ary relay injection (`1` when no relay nodes are injected)
 
 ### Node (`struct`, 128-byte cache-padded)
@@ -60,9 +63,9 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 ### Ring\<T\>
 
 - `Ring(int size)`
-- `static Ring<T> FromCon(Config con)`
-- `static Ring<T> FromCon(Config con, int maxHops)`
-- `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config con)`
+- `static Ring<T> FromConfig(Config config)`
+- `static Ring<T> FromConfig(Config config, int maxHops)`
+- `static Ring<T> FromContext(Scheduler.WorkContext ctx, Config config)`
 - `T Read(long workUnit)`
 - `void Write(long workUnit, T payload)`
 
@@ -74,6 +77,7 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 - `Strategy`
 - `SeparateRootThread`
 - `SeparateSinkThread`
+- `ThreadAffinity`
 - `InjectNodes`
 - `K`
 - `MaxFanIn`
@@ -81,8 +85,8 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and consum
 
 ### PartitionStrategy
 
+- `Stride` *(default)*
 - `ChunkedLinear`
-- `Stride`
 - `Clustered`
 - `Leveled`
 - `DepthFirst`

@@ -6,7 +6,7 @@ Most parallel schedulers spend a surprising amount of time coordinating work: pu
 
 No global queues. No locks. No work stealing. No allocations in the hot loop.
 
-> **Status:** Experimental (`v1.1.0`). APIs may change. Requires **.NET 10+**.
+> **Version:** `v2.0.0` · Requires **.NET 10+**.
 
 ---
 
@@ -41,7 +41,7 @@ dotnet test
 
 ## Example: Pipelined 3-Stage Graph
 
-Here is a diamond-free pipeline where `ingest` feeds `transform`, which feeds `sink`, running 64 cycles across 2 threads with `Slack = 4` (allowing up to 4 work units in flight per edge):
+Here is a pipeline where `ingest` feeds `transform`, which feeds `sink`, running 64 cycles across 2 threads with `Slack = 4` (allowing up to 4 work units in flight per edge):
 
 ```csharp
 using deltalag;
@@ -93,7 +93,7 @@ rawToTransform = Ring<int>.FromContext(ctx, config);
 transformToSink = Ring<int>.FromContext(ctx, config);
 
 // Partition nodes across threads and run until all nodes complete 64 cycles
-var scheduler = new Scheduler();
+using var scheduler = new Scheduler();
 scheduler.Run(ctx);
 ```
 
@@ -103,7 +103,7 @@ scheduler.Run(ctx);
 
 Because nodes can run ahead of their dependents when `Slack > 0`, choose the edge buffer that matches your `Slack` setting:
 
-- **`Ring<T>`** — A typed, non-boxing SPSC ring buffer for per-edge communication when `Slack > 0` or `InjectNodes = true`. **Prefer `Ring<T>.FromContext(ctx, config)`**: it reads `ctx.MaxEdgeHops` from the built graph and sizes the buffer to `ctx.MaxEdgeHops * (Slack + 1)` (rounded up to a power of two), preventing producers from overwriting unread slots. Avoid `Ring<T>.FromCon(config)` unless you know your graph is strictly single-hop—it hardcodes `maxHops = 1` (`Slack + 1`), so if `InjectNodes = true` adds relay hops (or `Slack` is enforced per hop across a multi-hop path), producers can run `MaxEdgeHops * (Slack + 1)` cycles ahead and silently overwrite unread data.
+- **`Ring<T>`** — A typed, non-boxing SPSC ring buffer for per-edge communication when `Slack > 0` or `InjectNodes = true`. **Prefer `Ring<T>.FromContext(ctx, config)`**: it reads `ctx.MaxEdgeHops` from the built graph and sizes the buffer to `ctx.MaxEdgeHops * (Slack + 1)` (rounded up to a power of two), preventing producers from overwriting unread slots. Avoid `Ring<T>.FromConfig(config)` unless you know your graph is strictly single-hop—it hardcodes `maxHops = 1` (`Slack + 1`), so if `InjectNodes = true` adds relay hops (or `Slack` is enforced per hop across a multi-hop path), producers can run `MaxEdgeHops * (Slack + 1)` cycles ahead and silently overwrite unread data.
 - **`Slot<T>`** — A single unbuffered value wrapper. Only safe when `Slack = 0` and `MaxEdgeHops == 1` (strict single-hop lock-step).
 
 ---
@@ -127,6 +127,12 @@ Set `SeparateRootThread = true` in `Config` to isolate root nodes on their own t
 ### Automatic Fan-In / Fan-Out Smoothing
 
 Wide fan-in or fan-out nodes can become a bottleneck during dependency checks. Setting `InjectNodes = true` in `Config` enables `KaryInjector`, which automatically rewrites high-degree edges into balanced *k*-ary relay trees (controlled by `K`, `MaxFanIn`, and `MaxFanOut`) during `GraphBuilder.Build(config)`.
+
+### Reusable Worker Pool & Thread Affinity
+
+`Scheduler` implements `IDisposable` and maintains a persistent pool of background worker `Thread`s across `Run(ctx)` calls, avoiding per-run thread creation overhead. If `ThreadCount` or `ThreadAffinity` changes between runs, the pool is automatically reconfigured.
+
+Set `ThreadAffinity = true` in `Config` to pin worker `t` to logical core `t % Environment.ProcessorCount` (supported on Windows via `SetThreadAffinityMask` and Linux via `sched_setaffinity`, with graceful fallback to unpinned execution on unsupported platforms). Call `scheduler.Dispose()` (or use `using`) when finished to shut down and join worker threads cleanly.
 
 ---
 

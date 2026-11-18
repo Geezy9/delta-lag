@@ -1,6 +1,3 @@
-using deltalag;
-using Xunit;
-
 namespace deltalag.Tests;
 
 public class RingTests
@@ -40,21 +37,21 @@ public class RingTests
     [InlineData(4, 8)]
     [InlineData(7, 8)]
     [InlineData(8, 16)]
-    public void FromCon_RoundsSlackPlusOneUpToPowerOfTwo(int slack, int expectedSize)
+    public void FromConfig_RoundsSlackPlusOneUpToPowerOfTwo(int slack, int expectedSize)
     {
         var config = new Config { Slack = slack };
 
-        var ring = Ring<int>.FromCon(config);
+        var ring = Ring<int>.FromConfig(config);
 
         Assert.Equal(expectedSize, ring.Buffers.Length);
     }
 
     [Fact]
-    public void FromCon_WithMaxSlack_ThrowsOverflowException()
+    public void FromConfig_WithMaxSlack_ThrowsOverflowException()
     {
         var config = new Config { Slack = int.MaxValue };
 
-        Assert.Throws<OverflowException>(() => Ring<int>.FromCon(config));
+        Assert.Throws<OverflowException>(() => Ring<int>.FromConfig(config));
     }
 
     [Fact]
@@ -111,7 +108,7 @@ public class RingTests
             InjectNodes = false
         };
 
-        var ring = Ring<long>.FromCon(config);
+        var ring = Ring<long>.FromConfig(config);
         var received = new long[config.Cycles];
 
         var builder = new GraphBuilder();
@@ -120,7 +117,7 @@ public class RingTests
         builder.AddEdge(producer, consumer);
 
         var ctx = builder.Build(config);
-        var scheduler = new Scheduler();
+        using var scheduler = new Scheduler();
         scheduler.Run(ctx);
 
         for (int i = 0; i < config.Cycles; i++)
@@ -134,11 +131,11 @@ public class RingTests
     [InlineData(1, 3, 8)]
     [InlineData(3, 2, 8)]
     [InlineData(4, 2, 16)]
-    public void FromCon_WithMaxHops_SizesForMultiHopInFlightWindow(int slack, int maxHops, int expectedSize)
+    public void FromConfig_WithMaxHops_SizesForMultiHopInFlightWindow(int slack, int maxHops, int expectedSize)
     {
         var config = new Config { Slack = slack };
 
-        var ring = Ring<int>.FromCon(config, maxHops);
+        var ring = Ring<int>.FromConfig(config, maxHops);
 
         Assert.Equal(expectedSize, ring.Buffers.Length);
     }
@@ -213,7 +210,7 @@ public class RingTests
             fanInRings[b] = Ring<long>.FromContext(ctx, config);
         }
 
-        var scheduler = new Scheduler();
+        using var scheduler = new Scheduler();
         scheduler.Run(ctx);
 
         for (int w = 0; w < config.Cycles; w++)
@@ -230,8 +227,8 @@ public class RingTests
     }
 
     [Theory]
-    [InlineData(PartitionStrategy.ChunkedLinear)]
     [InlineData(PartitionStrategy.Stride)]
+    [InlineData(PartitionStrategy.ChunkedLinear)]
     [InlineData(PartitionStrategy.Clustered)]
     [InlineData(PartitionStrategy.Leveled)]
     [InlineData(PartitionStrategy.DepthFirst)]
@@ -246,8 +243,8 @@ public class RingTests
             InjectNodes = false
         };
 
-        var r0 = Ring<long>.FromCon(config);
-        var r1 = Ring<long>.FromCon(config);
+        var r0 = Ring<long>.FromConfig(config);
+        var r1 = Ring<long>.FromConfig(config);
         var received = new long[config.Cycles];
 
         var builder = new GraphBuilder();
@@ -258,7 +255,8 @@ public class RingTests
         builder.AddEdge(n1, n2);
 
         var ctx = builder.Build(config);
-        new Scheduler().Run(ctx);
+        using var scheduler = new Scheduler();
+        scheduler.Run(ctx);
 
         for (int w = 0; w < config.Cycles; w++)
         {

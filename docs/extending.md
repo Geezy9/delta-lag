@@ -58,8 +58,8 @@ public sealed class CycleArena<T> where T : unmanaged
 
 	public CycleArena(int slotCount, int elementsPerSlab)
 	{
-		if ((slotCount & (slotCount - 1)) != 0)
-			throw new ArgumentException("Slot count must be a power of two.", nameof(slotCount));
+		if (slotCount <= 0 || (slotCount & (slotCount - 1)) != 0)
+			throw new ArgumentException("Slot count must be a positive power of two.", nameof(slotCount));
 
 		_slabs = new T[slotCount][];
 		_heads = new int[slotCount];
@@ -157,7 +157,8 @@ int consumer = builder.AddNode(workUnit =>
 builder.AddEdge(producer, consumer);
 
 var ctx = builder.Build(config);
-new Scheduler().Run(ctx);
+using var scheduler = new Scheduler();
+scheduler.Run(ctx);
 ```
 
 If a producer emits multiple distinct chunks per cycle (e.g., header + payload, or variable slices for different consumers), you can also store `(int Offset, int Length)` descriptors in a `Ring<(int Offset, int Length)>` alongside the `CycleArena<T>`.
@@ -182,7 +183,7 @@ For `N` producers feeding 1 consumer, **do not** share a single `Ring<T>` across
 ```csharp
 var inputs = new Ring<double>[producerCount];
 for (int p = 0; p < producerCount; p++)
-	inputs[p] = Ring<double>.FromCon(config);
+	inputs[p] = Ring<double>.FromConfig(config);
 
 // Each producer k writes to inputs[k].Write(workUnit, value);
 // Consumer reads inputs[0..N-1].Read(workUnit) and reduces.
@@ -204,7 +205,7 @@ public sealed class TypedPipeline
 
 	public OutputPort<TOut> AddSource<TOut>(Func<int, TOut> produce)
 	{
-		var ring = Ring<TOut>.FromCon(_config);
+		var ring = Ring<TOut>.FromConfig(_config);
 		int id = _builder.AddNode(w => ring.Write(w, produce(w)));
 		return new OutputPort<TOut>(id, ring);
 	}
@@ -213,7 +214,7 @@ public sealed class TypedPipeline
 		OutputPort<TIn> input,
 		Func<int, TIn, TOut> transform)
 	{
-		var outRing = Ring<TOut>.FromCon(_config);
+		var outRing = Ring<TOut>.FromConfig(_config);
 		int id = _builder.AddNode(w =>
 		{
 			TIn val = input.Buffer.Read(w);
@@ -232,7 +233,8 @@ public sealed class TypedPipeline
 	public void Run()
 	{
 		var ctx = _builder.Build(_config);
-		new Scheduler().Run(ctx);
+		using var scheduler = new Scheduler();
+		scheduler.Run(ctx);
 	}
 }
 ```
@@ -250,4 +252,4 @@ When writing custom external primitives, keep these hardware-level details in mi
 - **Re-running a graph (rebuild `WorkContext` vs. manual counter manipulation):**
   `GraphBuilder.Build(config)` allocates a fresh `Node[]` initialized to `WorkDone = 0` and `WorkClaimed = 0`. A `WorkContext` is single-use for `0..Cycles - 1` (since `Node.WorkDone` reaches `Cycles`). **The ideal, preferred path is to rebuild `WorkContext` via `builder.Build(config)` whenever you need to run another batch of cycles** (and reset any external buffer state if needed). If rebuilding `WorkContext` is not feasible for your use case, `WorkContext` fields (`NodeArray`, `Cycles`, etc.) and `Node` members are `public`, so you *can* manipulate or reset node counters yourself (e.g., resetting `ctx.NodeArray` or calling `PublishWorkDone` / `TryClaimWork` in place), **but this comes with no guarantees**—manually mutating counters or context arrays bypasses `GraphBuilder.Build`'s clean initialization contract and can cause stalled threads, skipped or duplicate cycles, or data races if counters and external buffers fall out of sync.
 - **Thread count clamping:**
-  `GraphBuilder.Build(config)` clamps `Threads` to `Environment.ProcessorCount` (or `Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4))` when `Threads <= 0` or `Threads > Environment.ProcessorCount * 2`) and to `Math.Max(1, nodeCount)` (since you cannot have more active worker threads than nodes). External buffers sized by thread count should not assume `config.Threads` exceeds `nodeCount`.
+  `GraphBuilder.Build(config)` clamps positive `Threads` to `Math.Min(config.Threads, Environment.ProcessorCount)` (or defaults to `Math.Min(Environment.ProcessorCount, Math.Max(1, nodeCount / 4))` when `Threads <= 0`) and then caps to `nodeCount` (since you cannot have more active worker threads than nodes). External buffers sized by thread count should not assume `config.Threads` exceeds `nodeCount`.
