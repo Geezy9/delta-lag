@@ -1,57 +1,11 @@
 ﻿using System.Runtime.CompilerServices;
 namespace deltalag;
 
-internal class helpers
+internal class Helpers
 {
-    public int[] inDegree(Graph g)
+    internal static void BuildReverseCSR(Graph g, out List<int> parentEdges, out List<int> parentOffsets)
     {
-        var nodes = g.nodes;
-        int[] inDegree = new int[nodes.Count];
-        for (int i = 0; i < inDegree.Length; i++)
-        {
-            for (int ei = g.offsets[i]; ei < g.offsets[i + 1]; ei++)
-            {
-                int to = g.edges[ei];
-                inDegree[to]++;
-            }
-        }
-        return inDegree;
-
-    }
-    public int[] Plink(Graph g)
-    {
-        int l = g.nodes.Count;
-        int[] parent = Enumerable.Repeat(-1, l).ToArray();
-
-        for (int i = 0; i < l; i++)
-        {
-
-            for (int ei = g.offsets[i]; ei < g.offsets[i + 1]; ei++)
-            {
-                int v = g.edges[ei];
-
-                if (parent[v] == -1)
-                    parent[v] = i;
-                else
-                    parent[v] = -2;
-            }
-        }
-
-        return parent;
-    }
-    public int[] outDegree(Graph g)
-    {
-        int l = g.nodes.Count;
-        int[] outDeg = new int[l];
-
-        for (int i = 0; i < l; i++)
-            outDeg[i] = g.offsets[i + 1] - g.offsets[i];
-
-        return outDeg;
-    }
-    public static void BuildReverseCSR(Graph g, out List<int> parentEdges, out List<int> parentOffsets)
-    {
-        int n = g.nodes.Count;
+        int n = g.NodeCount;
 
         parentOffsets = new List<int>(new int[n + 1]);
         parentEdges = new List<int>(g.edges.Count);
@@ -87,11 +41,51 @@ internal class helpers
         }
     }
 
+    internal static bool HasCycle(Graph g)
+    {
+        int n = g.NodeCount;
+        int[] inDegree = new int[n];
+
+        for (int u = 0; u < n; u++)
+        {
+            for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
+            {
+                int v = g.edges[ei];
+                inDegree[v]++;
+            }
+        }
+
+        var queue = new Queue<int>();
+        for (int i = 0; i < n; i++)
+        {
+            if (inDegree[i] == 0)
+                queue.Enqueue(i);
+        }
+
+        int visited = 0;
+        while (queue.Count > 0)
+        {
+            int u = queue.Dequeue();
+            visited++;
+
+            for (int ei = g.offsets[u]; ei < g.offsets[u + 1]; ei++)
+            {
+                int v = g.edges[ei];
+                inDegree[v]--;
+                if (inDegree[v] == 0)
+                    queue.Enqueue(v);
+            }
+        }
+
+        return visited != n;
+    }
+
+
 
     // Returns the observed WorkDone value if the node can fire, or -1 if it cannot.
     // Returning the snapshot lets the caller use it directly in a CAS to prevent double-firing.
     [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-    public static int CanFire(
+    internal static long CanFire(
         int i,
         int slack,
         // Use an array instead of a List to keep data contiguous in memory
@@ -103,33 +97,32 @@ internal class helpers
     {
         // Fetch work once
         ref var nodeRef = ref nodes[i];
-        int myWork = nodeRef.WorkDone;
+        long myWork = nodeRef.WorkDone;
 
-        int minParentWork = myWork + 1;
-        int minChildWork = myWork - slack;
+        long minParentWork = myWork + 1;
+        long minChildWork = myWork - slack;
 
         int parentStart = parentOffsets[i];
         int parentEnd = parentOffsets[i + 1];
         int childStart = offsets[i];
         int childEnd = offsets[i + 1];
 
-        // Unroll the logic slightly to eliminate branching overheads
+        // Scan whichever neighbor list is shorter first to fail fast on high-fanout/fanin nodes.
         int pLen = parentEnd - parentStart;
         int cLen = childEnd - childStart;
 
         if (pLen <= cLen)
         {
-            // Check parents first, since they are more likely to block firing
             for (int k = parentStart; k < parentEnd; k++)
             {
-                // all parents must be ahead by at least 1 unit of work
+                // All parents must be at least 1 cycle ahead of this node.
                 if (nodes[parentEdges[k]].WorkDone < minParentWork)
                     return -1;
             }
 
             for (int k = childStart; k < childEnd; k++)
             {
-                // all children must be behind by at most slack units of work
+                // Children cannot lag this node by more than `slack` cycles (backpressure).
                 if (nodes[edges[k]].WorkDone < minChildWork)
                     return -1;
             }
