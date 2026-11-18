@@ -41,7 +41,7 @@ dotnet test
 
 ## Example: Pipelined 3-Stage Graph
 
-Here is a diamond-free pipeline where `ingest` feeds `transform`, which feeds `sink`, running 64 cycles across 2 threads with `Slack = 4` (allowing up to 4 work units in flight per edge):
+Here is a pipeline where `ingest` feeds `transform`, which feeds `sink`, running 64 cycles across 2 threads with `Slack = 4` (allowing up to 4 work units in flight per edge):
 
 ```csharp
 using deltalag;
@@ -93,7 +93,7 @@ rawToTransform = Ring<int>.FromContext(ctx, config);
 transformToSink = Ring<int>.FromContext(ctx, config);
 
 // Partition nodes across threads and run until all nodes complete 64 cycles
-var scheduler = new Scheduler();
+using var scheduler = new Scheduler();
 scheduler.Run(ctx);
 ```
 
@@ -127,6 +127,12 @@ Set `SeparateRootThread = true` in `Config` to isolate root nodes on their own t
 ### Automatic Fan-In / Fan-Out Smoothing
 
 Wide fan-in or fan-out nodes can become a bottleneck during dependency checks. Setting `InjectNodes = true` in `Config` enables `KaryInjector`, which automatically rewrites high-degree edges into balanced *k*-ary relay trees (controlled by `K`, `MaxFanIn`, and `MaxFanOut`) during `GraphBuilder.Build(config)`.
+
+### Reusable Worker Pool & Thread Affinity
+
+`Scheduler` implements `IDisposable` and maintains a persistent pool of background worker `Thread`s across `Run(ctx)` calls, avoiding per-run thread creation overhead. If `ThreadCount` or `ThreadAffinity` changes between runs, the pool is automatically reconfigured.
+
+Set `ThreadAffinity = true` in `Config` to pin worker `t` to logical core `t % Environment.ProcessorCount` (supported on Windows via `SetThreadAffinityMask` and Linux via `sched_setaffinity`, with graceful fallback to unpinned execution on unsupported platforms). Call `scheduler.Dispose()` (or use `using`) when finished to shut down and join worker threads cleanly.
 
 ---
 

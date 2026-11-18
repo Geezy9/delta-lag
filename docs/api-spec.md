@@ -38,11 +38,22 @@ Throws:
 - `InvalidOperationException` when the graph contains a cycle, or when `SeparateRootThread` / `SeparateSinkThread` leaves fewer than 1 general worker thread.
 - `IndexOutOfRangeException` when edge target validation fails.
 
-## Scheduler
+## Scheduler (`IDisposable`)
+
+`Scheduler` maintains a persistent, reusable pool of background worker `Thread`s across `Run` invocations, automatically reconfiguring the pool if `ctx.ThreadCount` or `ctx.ThreadAffinity` changes between runs.
 
 ### `void Run(WorkContext ctx)`
 
-Runs until each node reaches `ctx.Cycles` completed work units using the pre-allocated schedules and configuration stored in `ctx`.
+Runs until each node reaches `ctx.Cycles` completed work units using the pre-allocated schedules and configuration stored in `ctx`. When `ctx.ThreadAffinity` is `true`, each worker `t` attempts to pin itself to logical core `t % Environment.ProcessorCount` (Windows `SetThreadAffinityMask`, Linux `sched_setaffinity`, with graceful fallback).
+
+Throws:
+
+- `ObjectDisposedException` if `Scheduler` has been disposed.
+- Rethrows any unhandled task exception (or `AggregateException` if multiple workers fault).
+
+### `void Dispose()`
+
+Signals worker threads to exit, joins them, and disposes internal synchronization primitives. Idempotent.
 
 ## Config
 
@@ -54,6 +65,7 @@ Runs until each node reaches `ctx.Cycles` completed work units using the pre-all
 - `Strategy` (`PartitionStrategy`) partition method
 - `SeparateRootThread` (`bool`) optional root-node thread isolation
 - `SeparateSinkThread` (`bool`) optional sink-node (out-degree `0`) thread isolation
+- `ThreadAffinity` (`bool`) optional core pinning (`t % Environment.ProcessorCount`) on Windows and Linux with graceful fallback
 - `InjectNodes` (`bool`) enables k-ary fan-in/fan-out node injection
 - `K` (`int`) branch factor for injected tree nodes
 - `MaxFanIn` (`int`) fan-in limit before injection
@@ -88,6 +100,7 @@ Compiled graph and execution context returned by `GraphBuilder.Build` and passed
 - `int Slack` — Allowed downstream lag.
 - `int ThreadCount` — Effective worker thread count.
 - `int[][] ThreadSchedules` — Pre-partitioned node ID lists per worker thread.
+- `bool ThreadAffinity` — Whether worker threads are pinned to logical cores (`t % Environment.ProcessorCount`).
 - `int MaxEdgeHops` — Maximum hop distance between any original node and its original children after optional `KaryInjector` relay insertion (`1` when `InjectNodes = false` or no relay nodes are injected).
 
 ## Node

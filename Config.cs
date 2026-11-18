@@ -16,9 +16,9 @@ namespace deltalag
         public int MaxFanOut; // Inject tree when nodes have more children than this
         public bool SeparateRootThread; // Isolate a thread on the root for less latency when starting work. 
         public bool SeparateSinkThread; // Isolate a thread on the sink nodes for less latency when finishing work.
+        public bool ThreadAffinity; // Pin threads to cores for improved locality and latency
 
         //wip
-        //public bool ThreadAffinity; // Pin threads to cores for improved locality and latency;
         //public WaitStrategy WaitStrategy; // How should Threads wait
         //public bool TrashTaskWhenStalled; // if partition strategy allows diffrent threads to touch nodes this can decrease the likelyhood of progress degregation by throwing out tasks that cant be published(released) after a certain point
         //public int SpinCountBeforeStall; // how long before trashing

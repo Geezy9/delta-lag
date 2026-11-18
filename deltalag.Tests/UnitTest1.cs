@@ -346,4 +346,109 @@ public class SchedulerTests
             Assert.Equal(10, ctx.NodeArray[b].WorkDone);
         }
     }
+
+    [Fact]
+    public void Run_WithThreadAffinityEnabled_AndToggled_CompletesAllCycles()
+    {
+        using var scheduler = new Scheduler();
+
+        foreach (bool affinity in new[] { true, false, true })
+        {
+            int countA = 0;
+            int countB = 0;
+            var builder = new GraphBuilder();
+            int a = builder.AddNode(_ => Interlocked.Increment(ref countA));
+            int b = builder.AddNode(_ => Interlocked.Increment(ref countB));
+            builder.AddEdge(a, b);
+
+            var ctx = builder.Build(new Config
+            {
+                Cycles = 20,
+                Slack = 2,
+                Threads = 2,
+                Strategy = PartitionStrategy.Stride,
+                ThreadAffinity = affinity,
+            });
+
+            scheduler.Run(ctx);
+
+            Assert.Equal(20, countA);
+            Assert.Equal(20, countB);
+            Assert.Equal(20, ctx.NodeArray[a].WorkDone);
+            Assert.Equal(20, ctx.NodeArray[b].WorkDone);
+        }
+    }
+
+    [Fact]
+    public void Run_ChangingThreadCountAcrossRuns_ReconfiguresPoolAndCompletes()
+    {
+        using var scheduler = new Scheduler();
+
+        foreach (int threads in new[] { 2, 4, 1, 3 })
+        {
+            var builder = new GraphBuilder();
+            int n0 = builder.AddNode();
+            int n1 = builder.AddNode();
+            int n2 = builder.AddNode();
+            int n3 = builder.AddNode();
+            builder.AddEdge(n0, n1);
+            builder.AddEdge(n1, n2);
+            builder.AddEdge(n2, n3);
+
+            var ctx = builder.Build(new Config
+            {
+                Cycles = 15,
+                Slack = 1,
+                Threads = threads,
+                Strategy = PartitionStrategy.Stride,
+            });
+
+            scheduler.Run(ctx);
+
+            Assert.Equal(15, ctx.NodeArray[n0].WorkDone);
+            Assert.Equal(15, ctx.NodeArray[n3].WorkDone);
+        }
+    }
+
+    [Fact]
+    public void Run_WhenTaskThrows_PropagatesExceptionWithoutDeadlock()
+    {
+        using var scheduler = new Scheduler();
+        var builder = new GraphBuilder();
+        int a = builder.AddNode(cycle =>
+        {
+            if (cycle == 3)
+                throw new InvalidOperationException("boom");
+        });
+        int b = builder.AddNode();
+        builder.AddEdge(a, b);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+        {
+            var ctx = builder.Build(new Config { Cycles = 10, Threads = 2, Strategy = PartitionStrategy.Stride });
+            scheduler.Run(ctx);
+        });
+        Assert.Equal("boom", ex.Message);
+    }
+
+    [Fact]
+    public void Run_AfterDispose_ThrowsObjectDisposedException()
+    {
+        var scheduler = new Scheduler();
+        var builder = new GraphBuilder();
+        int a = builder.AddNode();
+        int b = builder.AddNode();
+        builder.AddEdge(a, b);
+
+        var ctx = builder.Build(new Config { Cycles = 5, Threads = 2 });
+        scheduler.Run(ctx);
+        scheduler.Dispose();
+        scheduler.Dispose(); // idempotent
+
+        Assert.Throws<ObjectDisposedException>(() =>
+        {
+            var nextCtx = builder.Build(new Config { Cycles = 5, Threads = 2 });
+            scheduler.Run(nextCtx);
+        });
+    }
 }

@@ -106,6 +106,7 @@ public class GraphBuilder
         output.Cycles = con.Cycles;
         output.Slack = con.Slack;
         output.ThreadCount = threadCount;
+        output.ThreadAffinity = con.ThreadAffinity;
         output.ThreadSchedules = ThreadSchedules.Build(
             nodeCount,
             threadCount,
